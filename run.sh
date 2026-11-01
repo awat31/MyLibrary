@@ -26,12 +26,18 @@ if [ ! -d venv ]; then
   echo "First run detected — setting up…"
   python3 -m venv venv
   venv/bin/pip install --quiet -r requirements.txt
-  venv/bin/python seed.py
+  venv/bin/python seed.py       # creates the Admin user (skip if restoring a backup)
 fi
 
-# Gunicorn, one process + threads, HTTPS only on port 5000
+# Bind target: direct HTTPS on :443 by default; nginx deployments use 127.0.0.1:8000
+BIND="${BIND:-0.0.0.0:443}"
+WORKERS="${WORKERS:-1}"
+THREADS="${THREADS:-4}"
+CERTFILE="${CERTFILE:-certs/cert.pem}"
+KEYFILE="${KEYFILE:-certs/key.pem}"
+
 exec venv/bin/gunicorn \
-  --workers 1 --threads 4 --timeout 120 \
-  --bind 0.0.0.0:5000 \
-  --certfile certs/cert.pem --keyfile certs/key.pem \
+  --workers "$WORKERS" --threads "$THREADS" --timeout 120 \
+  --bind "$BIND" \
+  --certfile "$CERTFILE" --keyfile "$KEYFILE" \
   wsgi:app

@@ -1,0 +1,41 @@
+# MyLibrary — systemd unit
+# Install to /etc/systemd/system/mylibrary.service, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now mylibrary
+#
+# Assumes app code at /srv/mylibrary, owned by user `mylibrary`.
+# Adjust User=, WorkingDirectory= and EnvironmentFile= to taste.
+
+[Unit]
+Description=MyLibrary — personal bookshelf web app
+# Full install guide lives in the repo (adjust the path if you deploy elsewhere):
+Documentation=file:/srv/mylibrary/deploy/INSTALL.md
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=notify
+User=mylibrary
+Group=mylibrary
+WorkingDirectory=/srv/mylibrary
+EnvironmentFile=-/srv/mylibrary/.env
+# Optional overrides (uncomment / set as needed):
+# Environment=BIND=127.0.0.1:8000
+# Environment=WORKERS=2
+# Environment=THREADS=4
+# Environment=CERTFILE=/etc/letsencrypt/live/library.example.com/fullchain.pem
+# Environment=KEYFILE=/etc/letsencrypt/live/library.example.com/privkey.pem
+ExecStart=/srv/mylibrary/run.sh
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=120
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/srv/mylibrary/static/uploads /srv/mylibrary/instance_secret_key /srv/mylibrary/certs
+
+[Install]
+WantedBy=multi-user.target

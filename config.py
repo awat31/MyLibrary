@@ -43,6 +43,16 @@ class Config:
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
     MAX_CONTENT_LENGTH = 8 * 1024 * 1024  # 8 MB upload cap
     ALLOWED_COVER_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+
+    # --- Local cover cache ---------------------------------------------
+    # Remote covers (Open Library) are fetched on first display, cached on
+    # disk under var/cover_cache and served at LAN speed afterwards. The cache
+    # is LRU-trimmed: never-used-up-again covers age out, so the folder holds
+    # only what readers actually look at. Set COVER_CACHE_MAX_MB=0 to disable.
+    COVER_CACHE_DIR = os.path.join(BASE_DIR, "var", "cover_cache")
+    COVER_CACHE_MAX_MB = int(os.environ.get("COVER_CACHE_MAX_MB", "256"))
+    COVER_FETCH_TIMEOUT = 8
+    COVER_FETCH_MAX_BYTES = 8 * 1024 * 1024  # refuse oversized cover responses.
     MIN_PASSWORD_LENGTH = 12
 
     # --- Session/cookie hardening -------------------------------------

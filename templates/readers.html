@@ -23,7 +23,7 @@
       <a href="{{ url_for('reader_library', user_id=u.id) }}" class="reader-card">
         <span class="user-avatar big">{{ u.username[0]|upper }}</span>
         <div>
-          <div class="reader-name">{{ u.username }}
+          <div class="reader-name" title="{{ u.username }}"><span class="nm">{{ u.username|shortname }}</span>
             {% if u.is_admin %}<span class="admin-tag">Admin</span>{% endif %}
             {% if current_user.is_admin and not u.is_searchable %}<span class="hidden-tag">hidden</span>{% endif %}
           </div>

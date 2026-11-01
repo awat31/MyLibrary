@@ -1,0 +1,23 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Instance / node-local secrets — never commit
+instance_secret_key
+.env
+
+# TLS certificates (self-signed or otherwise) are generated per node
+certs/
+
+# User-uploaded cover images
+static/uploads/
+
+# On-demand remote cover cache
+var/cover_cache/
+
+# Backups / scratch
+*.sql.gz
+*.dump
+*.swp

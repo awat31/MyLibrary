@@ -4,15 +4,22 @@ MyLibrary — a bookshelf-style personal library web app.
 Run with:  ./run.sh   (or)   venv/bin/python app.py
 """
 import os
+import json
+import hashlib
+import re
 import secrets
+import tempfile
 import time
 import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import datetime
 
 from flask import (
     Flask, render_template, redirect, url_for, request, flash, abort,
-    send_from_directory, current_app, session, get_flashed_messages,
+    send_from_directory, send_file, current_app, session, get_flashed_messages,
 )
 from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user,
@@ -24,6 +31,14 @@ from config import Config
 from models import db, ensure_schemas, User, Book, Genre, LibraryEntry, book_genres
 
 MIN_PW = Config.MIN_PASSWORD_LENGTH
+
+# Open Library (Internet Archive) — free ISBN catalogue; queried live whenever a
+# user looks a book up, never bulk-imported.
+OPENLIBRARY_BASE = "https://openlibrary.org"
+COVERS_BASE = "https://covers.openlibrary.org"
+OPENLIBRARY_TIMEOUT = 8  # seconds
+ISBN_PATTERN = re.compile(r"^\d{9}[\dxX]$|^\d{13}$")
+OL_USER_AGENT = "MyLibrary/1.0 (personal library app; live ISBN lookups)"
 
 
 # --------------------------------------------------------------------------
@@ -53,6 +68,19 @@ def inject_globals():
         "app_name": "MyLibrary",
         "min_pw_length": app.config["MIN_PASSWORD_LENGTH"],
     }
+
+
+# Display cap for usernames in tightly-sized UI (readers-page cards).
+# Real usernames can be longer; we just don't let them blow up the layout.
+DISPLAY_NAME_LIMIT = 25
+
+
+@app.template_filter("shortname")
+def shortname(username: str, limit: int = DISPLAY_NAME_LIMIT) -> str:
+    """Render a username inside a fixed-size card: beyond `limit` chars it
+    is cut and suffixed with '...' (the full name stays in the hover title)."""
+    name = username or ""
+    return name if len(name) <= limit else name[:limit] + "..."
 
 
 # --------------------------------------------------------------------------
@@ -290,6 +318,351 @@ def form_to_book_data(form):
         "genres": parse_genres(form.get("genres")),
         "cover_url": safe_cover_url(form.get("cover_url")),
     }
+
+
+# --------------------------------------------------------------------------
+# Open Library ISBN lookup (live, on-demand — no bulk import)
+# --------------------------------------------------------------------------
+def _ol_json(path: str) -> dict:
+    request = urllib.request.Request(
+        OPENLIBRARY_BASE + path,
+        headers={"User-Agent": OL_USER_AGENT},
+    )
+    with urllib.request.urlopen(request, timeout=OPENLIBRARY_TIMEOUT) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _first(value):
+    if isinstance(value, list) and value:
+        return value[0]
+    return value if value else None
+
+
+def _authors_from(doc) -> str | None:
+    names = doc.get("author_name") or []
+    if not names:
+        return None
+    return ", ".join(names[:2]) + (" et al." if len(names) > 2 else "")
+
+
+def _normalize_ol_description(raw) -> str | None:
+    if isinstance(raw, dict):
+        raw = raw.get("value")
+    if not isinstance(raw, str):
+        return None
+    # Strip residual wiki markup; keep it plain prose.
+    cleaned = re.sub(r"\{\{[^}]*\}\}", "", raw)
+    cleaned = re.sub(r"'''?", "", cleaned)
+    return cleaned.strip()[:4000] or None
+
+
+def _isbns_from(doc, wanted: str) -> str | None:
+    """Prefer the queried ISBN form so uniqueness checks match what was typed."""
+    for source in (doc.get("isbn13"), doc.get("isbn")):
+        for candidate in (source if isinstance(source, list) else [source]):
+            if isinstance(candidate, str) and normalize_isbn(candidate) == wanted:
+                return wanted
+    return _first(doc.get("isbn13")) or _first(doc.get("isbn"))
+
+
+def _ol_fields_for_doc(doc: dict, wanted_isbn: str = "") -> dict:
+    fields = {
+        "isbn": _isbns_from(doc, wanted_isbn) or None,
+        "title": doc.get("title"),
+        "author": _authors_from(doc),
+        "publisher": _first(doc.get("publisher")),
+        "published_year": doc.get("first_publish_year"),
+        "cover_url": (f"{COVERS_BASE}/b/id/{doc['cover_i']}-L.jpg"
+                      if doc.get("cover_i") else None),
+        "description": None,
+        "genres": [],
+    }
+    work_key = doc.get("key")
+    if work_key:
+        try:
+            work = _ol_json(f"{work_key}.json")
+            fields["description"] = _normalize_ol_description(work.get("description"))
+            subjects = work.get("subjects") or []
+            picked = []
+            for subject in subjects:
+                name = unicodedata.normalize("NFKC", str(subject)).strip().title()[:64]
+                if name and len(picked) < 3 and name not in picked:
+                    picked.append(name)
+            fields["genres"] = picked
+        except Exception:
+            pass  # work detail is best-effort metadata enrichment
+    return fields
+
+
+def _ol_lookup_isbn(isbn: str) -> dict | None:
+    query = urllib.parse.urlencode({
+        "isbn": isbn,
+        "fields": "key,title,author_name,publisher,first_publish_year,cover_i,isbn,isbn13",
+        "limit": 1,
+    })
+    data = _ol_json(f"/search.json?{query}")
+    docs = data.get("docs") or []
+    if not docs:
+        return None
+    return _ol_fields_for_doc(docs[0], wanted_isbn=isbn)
+
+
+def _ol_keyword_search(query_text: str, limit: int = 5) -> list[dict]:
+    query = urllib.parse.urlencode({
+        "q": query_text,
+        "fields": "key,title,author_name,first_publish_year,cover_i,isbn,isbn13",
+        "limit": limit,
+    })
+    data = _ol_json(f"/search.json?{query}")
+    docs = data.get("docs") or []
+    results = []
+    for doc in docs:
+        results.append(_ol_fields_for_doc(doc))
+    return results
+
+
+@app.route("/api/books/lookup", methods=["GET"])
+@login_required
+def api_ol_lookup():
+    """ISBN -> Open Library fields (+ whether the book already exists locally)."""
+    isbn = normalize_isbn(request.args.get("isbn", ""))
+    if not ISBN_PATTERN.fullmatch(isbn):
+        return {"error": "invalid_isbn"}, 400
+    try:
+        fields = _ol_lookup_isbn(isbn)
+    except Exception:
+        return {"error": "openlibrary_unreachable"}, 502
+    if not fields:
+        return {"error": "not_found"}, 404
+    duplicate = find_duplicate_book(fields.get("isbn") or "", fields["title"] or "",
+                                    fields["author"] or "")
+    fields["duplicate"] = (
+        {"id": duplicate.id, "title": duplicate.title, "author": duplicate.author}
+        if duplicate else None
+    )
+    return fields
+
+
+@app.route("/api/books/search", methods=["GET"])
+@login_required
+def api_ol_search():
+    """Keyword search against Open Library (title/author discovery)."""
+    query_text = clean_search(request.args.get("q"))
+    if not query_text:
+        return {"error": "empty_query"}, 400
+    try:
+        return {"results": _ol_keyword_search(query_text)}
+    except Exception:
+        return {"error": "openlibrary_unreachable"}, 502
+
+
+# --------------------------------------------------------------------------
+# Local cover cache — covers fetched by/when a reader asks, never pre-seeded.
+# Hit rate-heavy pages (home/readers/search) serve covers at LAN speed after
+# the first view. The LRU trim means infrequently viewed books stop accruing
+# storage once the budget is met.
+# --------------------------------------------------------------------------
+COVER_CACHE_HOST = "covers.openlibrary.org"
+COVER_CACHE_TYPES = {
+    "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+def _cover_cache_hit(url: str) -> str | None:
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    cache_dir = current_app.config["COVER_CACHE_DIR"]
+    for extension in COVER_CACHE_TYPES.values():
+        path = os.path.join(cache_dir, digest + extension)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _is_cacheable_cover_url(url: str) -> bool:
+    try:
+        parts = urllib.parse.urlsplit(url)
+        return (
+            parts.scheme.lower() == "https"
+            and parts.hostname == COVER_CACHE_HOST
+            and parts.port in (None, 443)
+            and not parts.username
+            and not parts.password
+        )
+    except ValueError:
+        return False
+
+
+def _is_trusted_cover_redirect_url(url: str) -> bool:
+    try:
+        parts = urllib.parse.urlsplit(url)
+        hostname = parts.hostname or ""
+        return (
+            parts.scheme.lower() == "https"
+            and (hostname == "archive.org" or hostname.endswith(".archive.org"))
+            and parts.port in (None, 443)
+            and not parts.username
+            and not parts.password
+        )
+    except ValueError:
+        return False
+
+
+class _CoverRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not (_is_cacheable_cover_url(newurl)
+                or _is_trusted_cover_redirect_url(newurl)):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _cover_cache_store(url: str) -> str | None:
+    """Fetch an Open Library cover into the cache using an atomic replacement."""
+    if not _is_cacheable_cover_url(url):
+        return None
+    request = urllib.request.Request(
+        url, headers={"User-Agent": OL_USER_AGENT},
+    )
+    opener = urllib.request.build_opener(_CoverRedirectHandler())
+    with opener.open(
+            request, timeout=current_app.config["COVER_FETCH_TIMEOUT"]) as response:
+        if not (_is_cacheable_cover_url(response.geturl())
+                or _is_trusted_cover_redirect_url(response.geturl())):
+            return None
+        content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        extension = COVER_CACHE_TYPES.get(content_type)
+        if not extension:
+            return None
+        data = response.read(current_app.config["COVER_FETCH_MAX_BYTES"] + 1)
+    if not data or len(data) > current_app.config["COVER_FETCH_MAX_BYTES"]:
+        return None
+    budget = current_app.config["COVER_CACHE_MAX_MB"] * 1024 * 1024
+    if budget <= 0 or len(data) > budget:
+        return None
+    cache_dir = current_app.config["COVER_CACHE_DIR"]
+    os.makedirs(cache_dir, exist_ok=True)
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    target = os.path.join(cache_dir, digest + extension)
+    fd, tmp = tempfile.mkstemp(prefix=f".{digest}.", suffix=".part", dir=cache_dir)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, target)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return target
+
+
+def _cover_cache_bump(path: str) -> None:
+    """Mark a cached cover as recently used for LRU eviction."""
+    try:
+        os.utime(path, None)
+    except OSError:
+        current_app.logger.warning("Could not update cover-cache access time: %s", path)
+
+
+def _cover_cache_trim(protected_path: str | None = None) -> None:
+    """Keep the cache within its byte budget. mtime is bumped on every hit, so
+    eviction is least-recently-viewed-first: frequently seen covers stay warm,
+    ones no one looks at free their space."""
+    cache_dir = current_app.config["COVER_CACHE_DIR"]
+    try:
+        entries = []
+        total = 0
+        for name in os.listdir(cache_dir):
+            if name.startswith(".") or not any(
+                    name.endswith(extension) for extension in COVER_CACHE_TYPES.values()):
+                continue
+            path = os.path.join(cache_dir, name)
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            if not os.path.isfile(path):
+                continue
+            entries.append((stat.st_size, stat.st_mtime, path))
+            total += stat.st_size
+        budget = current_app.config["COVER_CACHE_MAX_MB"] * 1024 * 1024
+        if total <= budget:
+            return
+        for size, _mtime, path in sorted(entries, key=lambda e: e[1]):
+            if total <= budget:
+                break
+            if path == protected_path:
+                continue
+            try:
+                os.remove(path)
+                total -= size
+            except OSError:
+                current_app.logger.warning("Could not evict cover-cache file: %s", path)
+    except OSError:
+        current_app.logger.warning("Could not inspect cover cache at %s", cache_dir,
+                                   exc_info=True)
+
+
+def _cover_response(path: str):
+    """Serve a cached cover with a long-lived browser cache header — the ?v=
+    fingerprint in /cover/<id> URLs changes whenever a cover's source changes,
+    so stale images can never outlive their URL."""
+    response = send_file(path)
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
+
+
+def _cover_visible(book: Book) -> bool:
+    """Same visibility rule as /book/<id>: approved covers are public; a
+    pending book's cover only appears on the submitter's shelf (or Admin's)."""
+    if book.approved:
+        return True
+    return (getattr(current_user, "is_authenticated", False)
+            and (current_user.is_admin or current_user.id == book.submitted_by_id))
+
+
+def _serve_remote_cover(url: str):
+    if current_app.config["COVER_CACHE_MAX_MB"] > 0:
+        try:
+            cached = _cover_cache_hit(url)
+            if cached:
+                _cover_cache_bump(cached)
+                return _cover_response(cached)
+            path = _cover_cache_store(url)
+            if path:
+                _cover_cache_trim(protected_path=path)
+                return _cover_response(path)
+        except (OSError, urllib.error.URLError, ValueError):
+            current_app.logger.warning(
+                "Could not cache cover; using remote URL",
+                exc_info=True,
+            )
+    return redirect(url)
+
+
+@app.route("/cover-preview")
+@login_required
+def cover_preview():
+    """Cache Open Library covers shown in the temporary lookup-result cards."""
+    url = request.args.get("url", "")
+    if not _is_cacheable_cover_url(url):
+        abort(404)
+    return _serve_remote_cover(url)
+
+
+@app.route("/cover/<int:book_id>")
+def cover_proxy(book_id: int):
+    """Cover images, served through the local cache. Local uploads stream
+    straight from static/uploads; remote covers come from the LRU disk cache
+    (fetched from Open Library on this first request). Anything uncachable
+    falls back to a direct redirect to the hotlink."""
+    book = db.session.get(Book, book_id)
+    if not book or not _cover_visible(book):
+        abort(404)
+    if not book.cover_url:
+        if book.cover_filename:
+            return send_from_directory(app.config["UPLOAD_FOLDER"],
+                                       secure_filename(book.cover_filename))
+        abort(404)
+    return _serve_remote_cover(book.cover_url)
 
 
 def apply_book_fields(book: Book, data: dict):
@@ -876,15 +1249,10 @@ def _migrate(engine):
 
 
 if __name__ == "__main__":
-    init_db()
+    # Dev-only fallback (gunicorn via run.sh is the production entry point).
+    # The app is HTTPS-only in production; there is no plain-HTTP mode.
     if os.environ.get("DEV_HTTP") == "1":
-        # Plain-HTTP dev mode: browsers refuse Secure cookies, so relax them.
-        app.config["SESSION_COOKIE_SECURE"] = False
-        app.config["SECURE_HEADERS"] = {
-            k: v for k, v in app.config["SECURE_HEADERS"].items()
-            if k != "Content-Security-Policy"  # inline dev conveniences only
-        }
-        print("⚠️  DEV_HTTP=1: serving PLAIN HTTP with relaxed cookie flags — "
-              "for local development only.")
+        raise SystemExit("DEV_HTTP is disabled: MyLibrary runs HTTPS-only.")
+    init_db()
     app.run(host="0.0.0.0", port=5000,
             debug=bool(os.environ.get("FLASK_DEBUG")))

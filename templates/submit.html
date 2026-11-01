@@ -32,10 +32,16 @@
       <input type="number" name="published_year" min="-800" max="2100"
              value="{{ (editing and book.published_year) or (form_data.get('published_year') if form_data else '') }}">
     </label>
-    <label>ISBN <span class="hint">(unique — this is how we keep one record per book)</span>
-      <input type="text" name="isbn" maxlength="32" inputmode="numeric"
+    <label>ISBN <span class="hint">(unique — type one and My Library fetches the rest from Open Library)</span>
+      <input type="text" name="isbn" maxlength="32" inputmode="numeric" id="isbn-input" autocomplete="off"
              value="{{ (editing and book.isbn) or (form_data.get('isbn') if form_data else '') }}">
     </label>
+    <div class="full-width lookup-row">
+      <button type="button" class="btn btn-small btn-wood" id="isbn-fetch" title="Fetch title, author, publisher, year, description, genres and cover from Open Library">
+        ⤵ Fetch details from Open Library
+      </button>
+      <span class="lookup-status" id="lookup-status"></span>
+    </div>
     <label>Genres / categories <span class="hint">(comma separated — as many as you like)</span>
       <input type="text" name="genres" list="genre-list"
              value="{{ (editing and book.genre_names|join(', ')) or (form_data.get('genres') if form_data else '') }}"
@@ -63,11 +69,25 @@
     <a href="{{ url_for('home') }}" class="btn btn-ghost">Cancel</a>
   </div>
 </form>
+
+{% if not editing %}
+<section class="discover-box">
+  <h2 class="section-title">Don't know the ISBN? Find it on Open Library</h2>
+  <div class="filter-row">
+    <div class="filter discover-input">
+      <label>Title and/or author</label>
+      <input type="search" id="ol-query" placeholder="e.g. Dune Frank Herbert" autocomplete="off">
+    </div>
+    <div class="filter filter-actions">
+      <button type="button" class="btn btn-wood" id="ol-search">⌕ Search Open Library</button>
+    </div>
+  </div>
+  <div class="ol-results" id="ol-results" hidden></div>
+</section>
+{% endif %}
 {% endif %}
 
-{% if duplicate %}
-  <div class="duplicate-box">
-    <h2>Good news — we already have this one</h2>
+{% if duplicate %}  <div class="duplicate-box">    <h2>Good news — we already have this one</h2>
     <p>A record for <em>{{ duplicate.title }}</em> by {{ duplicate.author }}
       {% if duplicate.isbn %}(ISBN {{ duplicate.isbn }}){% endif %} already exists, so only one
       copy is kept in the catalogue.</p>
@@ -77,4 +97,8 @@
     </div>
   </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/ol_lookup.js') }}" defer></script>
 {% endblock %}

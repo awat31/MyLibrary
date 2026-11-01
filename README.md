@@ -23,7 +23,9 @@ The launcher detects first run: it installs a Python venv, generates a
 **self-signed TLS certificate** (`certs/cert.pem`, `certs/key.pem`, covering
 `localhost` and `127.0.0.1`), creates both schemas, seeds the **Admin** user and
 a small starter catalogue, then serves **HTTPS only** with gunicorn at
-**https://localhost:5000** (bound on 0.0.0.0, so reachable from your LAN).
+**https://localhost** (port **443** — the standard HTTPS port; the launcher
+requires root or `CAP_NET_BIND_SERVICE` to bind it, which is free in this LXC
+container as we run as root).
 
 Your browser will show a warning because the certificate is self-signed — this
 is expected. Accept/bypass it, or import `certs/cert.pem` as a trusted root
@@ -33,11 +35,28 @@ Manual equivalent:
 
 ```bash
 python3 -m venv venv && venv/bin/pip install -r requirements.txt
-venv/bin/python seed.py          # Admin + sample books
-./run.sh                         # HTTPS server
-# dev alternative over plain HTTP:
-venv/bin/python app.py
+venv/bin/python seed.py          # optional sample data
+./run.sh                         # HTTPS server (gunicorn)
 ```
+
+### Configuration overrides
+
+`run.sh` honours environment variables — useful behind systemd or an nginx
+proxy: `BIND` (default `0.0.0.0:443`), `WORKERS` (default `1`), `THREADS`
+(default `4`), `CERTFILE` / `KEYFILE` (defaults under `certs/`).
+
+### Deploying to another node
+
+A full checklist lives in **`deploy/INSTALL.md`** — target-machine prerequisites,
+PostgreSQL schema setup, a ready-made systemd unit (`deploy/mylibrary.service`)
+and an optional nginx + Let's Encrypt reverse-proxy config
+(`deploy/nginx.conf`). `venv/`, `certs/`, `instance_secret_key` and
+`static/uploads/` are node-local (see `.gitignore`) and never travel with
+the code.
+
+The app is **HTTPS-only** by design — there is no plain-HTTP mode. For local
+development against the Flask dev server use `DEV_HTTP`-free `venv/bin/python app.py`
+(debug off unless `FLASK_DEBUG=1`); note its HTTP origin prevents Secure cookies.
 
 ### Passwords
 
@@ -63,6 +82,14 @@ venv/bin/python app.py
 - **Search catalogue** — keyword search across *every* field (title, author, publisher,
   ISBN, year, description, genres) plus author / genre / published-year filters;
   one click shelves any book.
+- **Submit a book (Open Library assisted)** — type an ISBN and the form live-fetches
+  the details from **Open Library** (title, author, publisher, year, description,
+  genres, cover); no ISBN? search by title/author and fill the form from a result
+  card. Open Library covers are fetched on demand and cached locally on disk;
+  no covers are preloaded at startup, and the disk cache persists across
+  restarts. Uploaded image files remain available as a local alternative.
+  Nothing is bulk-imported: books enter the catalogue only through
+  **Admin approval**.
 - **My Shelf** — books rendered sitting on a dark mahogany shelf; hovering lifts a
   book off the shelf. Shelves grow automatically as books are added; scroll down
   for more rows. Shows the date each book entered your library and a
@@ -107,3 +134,5 @@ Environment overrides in `config.py`:
 
 - `DATABASE_URL` — defaults to `postgresql+psycopg2://mylibrary:mylibrary_pw@localhost:5432/mylibrary`
 - `SECRET_KEY` — set your own in production
+- `COVER_CACHE_MAX_MB` — maximum size of the on-demand cover cache in
+  `var/cover_cache/` (default `256`; set to `0` to disable disk caching).

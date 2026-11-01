@@ -206,6 +206,9 @@ a:hover { color: var(--gold); }
   font-weight: 640;
   font-size: 0.85rem;
   border-radius: 6px;
+  /* Avatars are flex children in several layouts (nav, reader cards):
+     never let long usernames squeeze them out of square. */
+  flex: none;
 }
 .user-avatar.big { width: 48px; height: 48px; font-size: 1.35rem; border-radius: var(--radius-s); }
 .username { font-size: 0.88rem; margin-right: 2px; }
@@ -632,6 +635,75 @@ main.page {
 /* The action cluster must never be squeezed into the box's right padding */
 .filter-actions { flex: 0 0 auto; flex-direction: row; gap: 6px; align-items: center; margin-left: 6px; }
 .filter.user-col { max-width: 240px; min-width: 180px; }
+
+/* ------------------------------------- Open Library lookup UI --- */
+.lookup-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 2px 0 6px;
+}
+.lookup-status {
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: var(--fs-sm);
+  color: var(--ink-soft);
+}
+.lookup-status.busy { color: var(--ink-soft); font-style: italic; }
+.lookup-status.ok { color: var(--success); }
+.lookup-status.error { color: var(--danger); }
+.lookup-status.duplicate { color: #8a6d2c; }
+.lookup-status a { color: var(--wood-mid); text-decoration: underline; }
+
+.discover-box {
+  background: var(--paper-card);
+  border: var(--hairline);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  margin-top: 26px;
+  box-shadow: var(--shadow-flat);
+}
+.discover-box .section-title { margin: 0 0 14px; }
+.discover-input { flex: 3; }
+
+.ol-results {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ol-note, .ol-busy { color: var(--ink-soft); font-size: var(--fs-sm); margin: 0; font-style: italic; }
+.ol-error { color: var(--danger); font-size: var(--fs-sm); margin: 0; }
+.ol-result {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--paper);
+  border: var(--hairline);
+  border-radius: var(--radius-s);
+  padding: 10px 12px;
+  cursor: pointer;
+  font-family: "Inter", system-ui, sans-serif;
+  text-align: left;
+  transition: transform 0.16s var(--ease), box-shadow 0.16s var(--ease), border-color 0.16s ease;
+}
+.ol-result:hover {
+  transform: translateY(-2px);
+  border-color: rgba(199, 154, 75, 0.55);
+  box-shadow: var(--shadow-card);
+}
+.ol-result img {
+  width: 42px;
+  height: 62px;
+  object-fit: cover;
+  border-radius: 3px;
+  box-shadow: 0 2px 6px rgba(60, 36, 21, 0.25);
+  background: var(--paper-deep);
+  flex: 0 0 auto;
+}
+.ol-result-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ol-result-text strong { color: var(--wood-dark); font-size: var(--fs-sm); }
+.ol-result-text small { color: var(--ink-soft); font-size: var(--fs-xs); }
 .hint { color: var(--ink-soft); font-size: var(--fs-xs); text-transform: none; letter-spacing: 0; font-weight: 400; }
 
 input[type="text"], input[type="search"], input[type="password"], input[type="number"],
@@ -920,13 +992,23 @@ div.standalone-cover { flex-direction: column; align-items: center; }
   border-color: rgba(199, 154, 75, 0.45);
   color: inherit;
 }
+.reader-card > div { min-width: 0; }
 .reader-name {
   font-family: "Fraunces", Georgia, serif;
   color: var(--wood-dark);
   font-size: 1.08rem;
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+/* The username itself auto-fits its card: never overflows the box, ellipsis
+   when tight (server-side shortname filter keeps it <= 25 chars either way). */
+.reader-name .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .reader-count { color: var(--ink-soft); font-family: "Inter", system-ui, sans-serif; font-size: var(--fs-xs); margin-top: 2px; }
 

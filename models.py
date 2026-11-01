@@ -10,6 +10,7 @@ book record exists exactly once: uniqueness is enforced on ISBN, falling
 back to (title, author) for books submitted without an ISBN.
 """
 from datetime import datetime
+import hashlib
 
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
@@ -95,11 +96,12 @@ class Book(db.Model):
 
     @property
     def cover_src(self) -> str:
-        """URL for the cover, or '' when no cover exists (template falls back to a spine)."""
+        """Local serving URL for the cover, or '' when no cover exists."""
+        if self.cover_url:
+            version = hashlib.sha256(self.cover_url.encode("utf-8")).hexdigest()[:16]
+            return f"/cover/{self.id}?v={version}"
         if self.cover_filename:
             return f"/uploads/{self.cover_filename}"
-        if self.cover_url:
-            return self.cover_url
         return ""
 
     @property
