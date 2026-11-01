@@ -1086,6 +1086,19 @@ div.standalone-cover { flex-direction: column; align-items: center; }
 }
 .footnote .fire-glow { color: var(--fire); }
 
+/* ---------------------------------------------------- pagination --- */
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 28px;
+  color: var(--ink-soft);
+  font-size: var(--fs-sm);
+}
+.pagination-controls { display: flex; align-items: center; gap: 12px; }
+.pagination-current { white-space: nowrap; }
+
 /* --------------------------------------------------------- errors --- */
 .error-card { margin-top: 10vh; }
 .error-code {
@@ -1108,6 +1121,7 @@ div.standalone-cover { flex-direction: column; align-items: center; }
   .form-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 620px) {
+  .pagination { align-items: flex-start; flex-direction: column; }
   .shelf { gap: 10px; }
   .book, .book-holder { flex-basis: 118px; width: 118px; height: 175px; }
   .shelf { min-height: 192px; }

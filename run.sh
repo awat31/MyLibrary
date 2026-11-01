@@ -36,6 +36,8 @@ THREADS="${THREADS:-4}"
 CERTFILE="${CERTFILE:-certs/cert.pem}"
 KEYFILE="${KEYFILE:-certs/key.pem}"
 
+mkdir -p var/cover_cache
+
 exec venv/bin/gunicorn \
   --workers "$WORKERS" --threads "$THREADS" --timeout 120 \
   --bind "$BIND" \

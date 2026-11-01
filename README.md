@@ -50,9 +50,10 @@ proxy: `BIND` (default `0.0.0.0:443`), `WORKERS` (default `1`), `THREADS`
 A full checklist lives in **`deploy/INSTALL.md`** — target-machine prerequisites,
 PostgreSQL schema setup, a ready-made systemd unit (`deploy/mylibrary.service`)
 and an optional nginx + Let's Encrypt reverse-proxy config
-(`deploy/nginx.conf`). `venv/`, `certs/`, `instance_secret_key` and
-`static/uploads/` are node-local (see `.gitignore`) and never travel with
-the code.
+(`deploy/nginx.conf`). `venv/`, `certs/`, `instance_secret_key`,
+`static/uploads/`, and `var/cover_cache/` are node-local (see `.gitignore`)
+and never travel with the code. Back up uploaded covers; the cache can be
+rebuilt on demand.
 
 The app is **HTTPS-only** by design — there is no plain-HTTP mode. For local
 development against the Flask dev server use `DEV_HTTP`-free `venv/bin/python app.py`
@@ -81,7 +82,8 @@ development against the Flask dev server use `DEV_HTTP`-free `venv/bin/python ap
 - **Home** — sign in / sign up, live site stats, and the newest catalogue arrivals already sitting on a shelf.
 - **Search catalogue** — keyword search across *every* field (title, author, publisher,
   ISBN, year, description, genres) plus author / genre / published-year filters;
-  one click shelves any book.
+  one click shelves any book. Results are paginated, with PostgreSQL trigram
+  indexes created during startup migration to accelerate substring searches.
 - **Submit a book (Open Library assisted)** — type an ISBN and the form live-fetches
   the details from **Open Library** (title, author, publisher, year, description,
   genres, cover); no ISBN? search by title/author and fill the form from a result

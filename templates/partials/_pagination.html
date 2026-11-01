@@ -1,0 +1,18 @@
+{% if pagination.pages > 1 %}
+  <nav class="pagination" aria-label="Pagination">
+    <span class="pagination-summary">
+      Showing {{ pagination.first }}–{{ pagination.last }} of {{ pagination.total }}
+    </span>
+    <div class="pagination-controls">
+      {% if pagination.has_prev %}
+        <a class="btn btn-small btn-ghost"
+           href="{{ pagination_url(page_parameter, pagination.prev_num) }}">Previous</a>
+      {% endif %}
+      <span class="pagination-current">Page {{ pagination.page }} of {{ pagination.pages }}</span>
+      {% if pagination.has_next %}
+        <a class="btn btn-small btn-ghost"
+           href="{{ pagination_url(page_parameter, pagination.next_num) }}">Next</a>
+      {% endif %}
+    </div>
+  </nav>
+{% endif %}

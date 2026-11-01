@@ -9,12 +9,14 @@ import hashlib
 import re
 import secrets
 import tempfile
+import threading
 import time
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 
 from flask import (
@@ -25,6 +27,7 @@ from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user,
 )
 from sqlalchemy import or_, and_, func, cast, String, desc, asc
+from sqlalchemy.orm import joinedload, selectinload
 from werkzeug.utils import secure_filename
 
 from config import Config
@@ -39,6 +42,11 @@ COVERS_BASE = "https://covers.openlibrary.org"
 OPENLIBRARY_TIMEOUT = 8  # seconds
 ISBN_PATTERN = re.compile(r"^\d{9}[\dxX]$|^\d{13}$")
 OL_USER_AGENT = "MyLibrary/1.0 (personal library app; live ISBN lookups)"
+PAGE_SIZE = 24
+ADMIN_PAGE_SIZE = 25
+READER_PAGE_SIZE = 30
+DB_INIT_LOCK_KEY = 1296849234
+ADMIN_STATS_CACHE_SECONDS = 30
 
 
 # --------------------------------------------------------------------------
@@ -61,12 +69,20 @@ def load_user(user_id):
     return db.session.get(User, int(user_id))
 
 
+def pagination_url(page_parameter: str, page_number: int) -> str:
+    values = dict(request.view_args or {})
+    values.update(request.args.to_dict())
+    values[page_parameter] = page_number
+    return url_for(request.endpoint, **values)
+
+
 @app.context_processor
 def inject_globals():
     return {
         "current_year": datetime.now().year,
         "app_name": "MyLibrary",
         "min_pw_length": app.config["MIN_PASSWORD_LENGTH"],
+        "pagination_url": pagination_url,
     }
 
 
@@ -198,6 +214,16 @@ def clean_search(value: str):
     return (value or "").strip()
 
 
+def paginate_query(query, page_parameter: str = "page", per_page: int = PAGE_SIZE):
+    page = max(1, request.args.get(page_parameter, 1, type=int) or 1)
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    if pagination.pages and page > pagination.pages:
+        pagination = query.paginate(
+            page=pagination.pages, per_page=per_page, error_out=False,
+        )
+    return pagination
+
+
 def search_books(
     q: str = None, genre: str = None, author: str = None,
     year_min=None, year_max=None, approved_only: bool = True,
@@ -210,7 +236,7 @@ def search_books(
     `library_of` restricts results to one user's shelf (joined with LibraryEntry
     so pending books submitted by that user are included).
     """
-    query = Book.query
+    query = Book.query.options(selectinload(Book.genres))
     if library_of is not None:
         query = (
             query.join(LibraryEntry, LibraryEntry.book_id == Book.id)
@@ -245,27 +271,28 @@ def search_books(
     if q:
         like = f"%{like_escape(q)}%"
         escape_kw = "\\"
-        genre_alias = db.aliased(Genre)
-        query = (
-            query.join(
-                book_genres, book_genres.c.book_id == Book.id, isouter=True
-            )
-            .join(genre_alias, genre_alias.id == book_genres.c.genre_id, isouter=True)  # noqa: E501
+        genre_match = (
+            db.session.query(book_genres.c.book_id)
+            .join(Genre, Genre.id == book_genres.c.genre_id)
             .filter(
-                or_(
-                    Book.title.ilike(like, escape=escape_kw),
-                    Book.author.ilike(like, escape=escape_kw),
-                    func.coalesce(Book.publisher, "").ilike(like, escape=escape_kw),
-                    Book.description.ilike(like, escape=escape_kw),
-                    Book.isbn.ilike(f"%{like_escape(q)}%", escape=escape_kw),
-                    cast(Book.published_year, String).ilike(
-                        f"%{like_escape(q)}%", escape=escape_kw),
-                    func.coalesce(genre_alias.name, "").ilike(like, escape=escape_kw),
-                )
+                book_genres.c.book_id == Book.id,
+                Genre.name.ilike(like, escape=escape_kw),
             )
-            .distinct()
+            .exists()
         )
-    return query.order_by(asc(Book.title), asc(Book.author)).all()
+        query = query.filter(
+            or_(
+                Book.title.ilike(like, escape=escape_kw),
+                Book.author.ilike(like, escape=escape_kw),
+                Book.publisher.ilike(like, escape=escape_kw),
+                Book.description.ilike(like, escape=escape_kw),
+                Book.isbn.ilike(like, escape=escape_kw),
+                cast(Book.published_year, String).ilike(
+                    like, escape=escape_kw),
+                genre_match,
+            )
+        )
+    return query.order_by(asc(Book.title), asc(Book.author))
 
 
 def save_cover_file(file_storage) -> str | None:
@@ -467,6 +494,31 @@ COVER_CACHE_TYPES = {
     "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
     "image/gif": ".gif",
 }
+_cover_locks_guard = threading.Lock()
+_cover_locks: dict[str, tuple[threading.Lock, int]] = {}
+
+
+@contextmanager
+def _cover_fetch_lock(url: str):
+    """Share one in-flight fetch per URL among threads in this worker."""
+    with _cover_locks_guard:
+        existing = _cover_locks.get(url)
+        if existing:
+            lock, references = existing
+        else:
+            lock, references = threading.Lock(), 0
+        _cover_locks[url] = (lock, references + 1)
+    lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+        with _cover_locks_guard:
+            current_lock, references = _cover_locks[url]
+            if references == 1:
+                del _cover_locks[url]
+            else:
+                _cover_locks[url] = (current_lock, references - 1)
 
 
 def _cover_cache_hit(url: str) -> str | None:
@@ -626,10 +678,15 @@ def _serve_remote_cover(url: str):
             if cached:
                 _cover_cache_bump(cached)
                 return _cover_response(cached)
-            path = _cover_cache_store(url)
-            if path:
-                _cover_cache_trim(protected_path=path)
-                return _cover_response(path)
+            with _cover_fetch_lock(url):
+                cached = _cover_cache_hit(url)
+                if cached:
+                    _cover_cache_bump(cached)
+                    return _cover_response(cached)
+                path = _cover_cache_store(url)
+                if path:
+                    _cover_cache_trim(protected_path=path)
+                    return _cover_response(path)
         except (OSError, urllib.error.URLError, ValueError):
             current_app.logger.warning(
                 "Could not cache cover; using remote URL",
@@ -677,10 +734,17 @@ def apply_book_fields(book: Book, data: dict):
     book.genres = data["genres"]
 
 
-def owned_book_ids(user: User) -> set[int]:
+def owned_book_ids(user: User, book_ids: list[int] | None = None) -> set[int]:
     if not user or not user.is_authenticated:
         return set()
-    return {e.book_id for e in user.library.all()}
+    query = db.session.query(LibraryEntry.book_id).filter(
+        LibraryEntry.user_id == user.id
+    )
+    if book_ids is not None:
+        if not book_ids:
+            return set()
+        query = query.filter(LibraryEntry.book_id.in_(book_ids))
+    return {book_id for (book_id,) in query.all()}
 
 
 def entry_for(user: User, book_id: int) -> LibraryEntry | None:
@@ -692,14 +756,35 @@ def require_admin():
         abort(403)
 
 
+_admin_stats_lock = threading.Lock()
+_admin_stats_expires = 0.0
+_admin_stats_value: dict[str, int] | None = None
+
+
 def admin_stats():
-    pending = Book.query.filter_by(approved=False).count()
-    return {
-        "books": Book.query.filter_by(approved=True).count(),
-        "pending": pending,
-        "users": User.query.count(),
-        "shelved": LibraryEntry.query.count(),
-    }
+    global _admin_stats_expires, _admin_stats_value
+    with _admin_stats_lock:
+        now = time.monotonic()
+        if _admin_stats_value is not None and now < _admin_stats_expires:
+            return dict(_admin_stats_value)
+        stats = db.session.query(
+            db.select(func.count(Book.id))
+            .where(Book.approved.is_(True))
+            .scalar_subquery().label("books"),
+            db.select(func.count(Book.id))
+            .where(Book.approved.is_(False))
+            .scalar_subquery().label("pending"),
+            db.select(func.count(User.id)).scalar_subquery().label("users"),
+            db.select(func.count(LibraryEntry.id)).scalar_subquery().label("shelved"),
+        ).one()
+        _admin_stats_value = {
+            "books": stats.books,
+            "pending": stats.pending,
+            "users": stats.users,
+            "shelved": stats.shelved,
+        }
+        _admin_stats_expires = now + ADMIN_STATS_CACHE_SECONDS
+        return dict(_admin_stats_value)
 
 
 # --------------------------------------------------------------------------
@@ -714,7 +799,10 @@ def home():
         .all()
     )
     stats = admin_stats()
-    owned = owned_book_ids(current_user) if current_user.is_authenticated else set()
+    owned = (
+        owned_book_ids(current_user, [book.id for book in recent])
+        if current_user.is_authenticated else set()
+    )
     return render_template(
         "home.html", recent_books=recent, stats=stats, owned_ids=owned
     )
@@ -794,15 +882,16 @@ def search():
     author = clean_search(request.args.get("author"))
     year_min = clean_search(request.args.get("year_min"))
     year_max = clean_search(request.args.get("year_max"))
-    books = search_books(q=q, genre=genre, author=author,
-                         year_min=year_min, year_max=year_max)
+    pagination = paginate_query(search_books(
+        q=q, genre=genre, author=author, year_min=year_min, year_max=year_max,
+    ))
+    books = pagination.items
     all_genres = Genre.query.order_by(Genre.name).all()
-    authors = [
-        a[0] for a in db.session.query(Book.author).distinct().order_by(Book.author)
-    ]
+    authors = sorted({book.author for book in books}, key=str.casefold)
     return render_template(
-        "search.html", books=books, genres=all_genres, authors=authors,
-        owned_ids=owned_book_ids(current_user),
+        "search.html", books=books, pagination=pagination,
+        genres=all_genres, authors=authors,
+        owned_ids=owned_book_ids(current_user, [book.id for book in books]),
         filters={"q": q, "genre": genre, "author": author,
                  "year_min": year_min, "year_max": year_max},
     )
@@ -852,26 +941,27 @@ def _library_view(owner: User):
     author = clean_search(request.args.get("author"))
     year_min = clean_search(request.args.get("year_min"))
     year_max = clean_search(request.args.get("year_max"))
-    books = search_books(
+    pagination = paginate_query(search_books(
         q=q, genre=genre, author=author, year_min=year_min, year_max=year_max,
         approved_only=False if owner.id == current_user.id else True,
         library_of=owner,
-    )
+    ))
+    books = pagination.items
+    entries = LibraryEntry.query.filter(
+        LibraryEntry.user_id == owner.id,
+        LibraryEntry.book_id.in_([book.id for book in books]),
+    ).all() if books else []
+    entries_by_book = {entry.book_id: entry for entry in entries}
     shelf_books = [
-        (entry, book) for book in books
-        for entry in [LibraryEntry.query.filter_by(
-            user_id=owner.id, book_id=book.id).first()]
-        if entry
+        (entries_by_book[book.id], book)
+        for book in books if book.id in entries_by_book
     ]
-    shelf_books.sort(key=lambda pair: pair[1].title.lower())
     all_genres = Genre.query.order_by(Genre.name).all()
-    authors = sorted(
-        {b.author for b in books},
-        key=str.casefold,
-    )
+    authors = sorted({book.author for book in books}, key=str.casefold)
     return render_template(
         "library.html",
-        owner=owner, entries=shelf_books, genres=all_genres, authors=authors,
+        owner=owner, entries=shelf_books, pagination=pagination,
+        genres=all_genres, authors=authors,
         is_own_shelf=owner.id == current_user.id,
         filters={"q": q, "genre": genre, "author": author,
                  "year_min": year_min, "year_max": year_max},
@@ -888,27 +978,30 @@ def my_library():
 @login_required
 def readers():
     q = clean_search(request.args.get("q"))
-    query = User.query.filter_by(is_searchable=True)
     if not current_user.is_admin:
-        # Admin accounts are staff, not readers — hidden from the list.
-        query = query.filter(User.is_admin.is_(False))
-    if q:
-        query = query.filter(User.username_lower.ilike(f"%{q.lower()}%"))
-    users = query.order_by(User.username_lower).all()
-    if current_user.is_admin:
-        # Admins also see who is hidden from the list.
-        hidden = User.query.filter_by(is_searchable=False)
-        if q:
-            hidden = hidden.filter(User.username_lower.ilike(f"%{q.lower()}%"))
-        users = sorted(
-            list(users) + list(hidden.all()),
-            key=lambda u: u.username_lower,
+        query = User.query.filter(
+            User.is_searchable.is_(True),
+            User.is_admin.is_(False),
         )
-    counts = dict(
-        db.session.query(LibraryEntry.user_id, func.count())
-        .group_by(LibraryEntry.user_id).all()
+    else:
+        query = User.query
+    if q:
+        query = query.filter(User.username_lower.ilike(f"%{like_escape(q.lower())}%", escape="\\"))
+    pagination = paginate_query(
+        query.order_by(User.username_lower), "readers_page", READER_PAGE_SIZE,
     )
-    return render_template("readers.html", users=users, counts=counts, q=q)
+    users = pagination.items
+    counts = {}
+    if users:
+        counts = dict(
+            db.session.query(LibraryEntry.user_id, func.count())
+            .filter(LibraryEntry.user_id.in_([user.id for user in users]))
+            .group_by(LibraryEntry.user_id).all()
+        )
+    return render_template(
+        "readers.html", users=users, counts=counts, q=q,
+        pagination=pagination,
+    )
 
 
 @app.route("/readers/<int:user_id>")
@@ -998,7 +1091,7 @@ def book_detail(book_id: int):
     holder_count = book.owners.count() if book.approved else None
     return render_template(
         "book_detail.html", book=book,
-        owned_ids=owned_book_ids(current_user),
+        owned_ids=owned_book_ids(current_user, [book.id]),
         holder_count=holder_count,
     )
 
@@ -1088,16 +1181,40 @@ def submit():
 @login_required
 def admin():
     require_admin()
-    pending = Book.query.filter_by(approved=False).order_by(asc(Book.created_at)).all()
-    all_books = Book.query.order_by(desc(Book.created_at)).all()
-    users = User.query.order_by(asc(User.username_lower)).all()
-    counts = dict(
-        db.session.query(LibraryEntry.user_id, func.count())
-        .group_by(LibraryEntry.user_id).all()
+    pending_page = paginate_query(
+        Book.query.filter_by(approved=False)
+        .options(joinedload(Book.submitted_by))
+        .order_by(asc(Book.created_at)),
+        "pending_page", ADMIN_PAGE_SIZE,
     )
+    books_page = paginate_query(
+        Book.query.order_by(desc(Book.created_at)),
+        "books_page", ADMIN_PAGE_SIZE,
+    )
+    users_page = paginate_query(
+        User.query.order_by(asc(User.username_lower)),
+        "users_page", ADMIN_PAGE_SIZE,
+    )
+    users = users_page.items
+    counts = {}
+    if users:
+        counts = dict(
+            db.session.query(LibraryEntry.user_id, func.count())
+            .filter(LibraryEntry.user_id.in_([user.id for user in users]))
+            .group_by(LibraryEntry.user_id).all()
+        )
+    book_counts = {}
+    if books_page.items:
+        book_counts = dict(
+            db.session.query(LibraryEntry.book_id, func.count())
+            .filter(LibraryEntry.book_id.in_([book.id for book in books_page.items]))
+            .group_by(LibraryEntry.book_id).all()
+        )
     return render_template(
-        "admin.html", pending=pending, all_books=all_books, users=users,
-        counts=counts, stats=admin_stats(),
+        "admin.html", pending=pending_page.items, pending_page=pending_page,
+        all_books=books_page.items, books_page=books_page,
+        users=users, users_page=users_page, counts=counts,
+        book_counts=book_counts, stats=admin_stats(),
     )
 
 
@@ -1214,15 +1331,37 @@ def uploads(filename):
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
+@app.route("/static/uploads/<path:filename>")
+@login_required
+def protected_static_upload(filename):
+    """Keep legacy uploaded-cover URLs behind the same login requirement."""
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+
 # --------------------------------------------------------------------------
 # Init
 # --------------------------------------------------------------------------
 def init_db():
     with app.app_context():
         engine = db.engine
-        ensure_schemas(engine, app.config["BOOK_SCHEMA"], app.config["USER_SCHEMA"])
-        _migrate(engine)
-        db.create_all()
+        with engine.connect() as lock_connection:
+            lock_connection.execute(
+                db.text("SELECT pg_advisory_lock(:lock_key)"),
+                {"lock_key": DB_INIT_LOCK_KEY},
+            )
+            lock_connection.commit()
+            try:
+                ensure_schemas(
+                    engine, app.config["BOOK_SCHEMA"], app.config["USER_SCHEMA"],
+                )
+                db.create_all()
+                _migrate(engine)
+            finally:
+                lock_connection.execute(
+                    db.text("SELECT pg_advisory_unlock(:lock_key)"),
+                    {"lock_key": DB_INIT_LOCK_KEY},
+                )
+                lock_connection.commit()
 
 
 def _migrate(engine):
@@ -1234,7 +1373,32 @@ def _migrate(engine):
             "ALTER TABLE users.users ADD COLUMN is_searchable BOOLEAN NOT NULL DEFAULT TRUE",
         ),
     ]
-    with engine.connect() as conn:
+    search_indexes = (
+        "CREATE INDEX IF NOT EXISTS ix_books_title_trgm "
+        "ON books.books USING gin (title gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS ix_books_author_trgm "
+        "ON books.books USING gin (author gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS ix_books_publisher_trgm "
+        "ON books.books USING gin (publisher gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS ix_books_description_trgm "
+        "ON books.books USING gin (description gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS ix_books_isbn_trgm "
+        "ON books.books USING gin (isbn gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS ix_genres_name_trgm "
+        "ON books.genres USING gin (name gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS ix_users_username_lower_trgm "
+        "ON users.users USING gin (username_lower gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS ix_books_author_lower "
+        "ON books.books (lower(author))",
+        "CREATE INDEX IF NOT EXISTS ix_books_title_author_lower "
+        "ON books.books (lower(title), lower(author))",
+        "CREATE INDEX IF NOT EXISTS ix_genres_name_lower "
+        "ON books.genres (lower(name))",
+    )
+    with engine.begin() as conn:
+        conn.execute(db.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        for ddl in search_indexes:
+            conn.execute(db.text(ddl))
         for schema, table, column, ddl in stmts:
             exists = conn.execute(
                 db.text(
@@ -1245,7 +1409,6 @@ def _migrate(engine):
             ).first()
             if not exists:
                 conn.execute(db.text(ddl))
-                conn.commit()
 
 
 if __name__ == "__main__":

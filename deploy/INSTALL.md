@@ -28,7 +28,7 @@ rsync -av --exclude venv --exclude certs --exclude instance_secret_key \
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y postgresql python3-venv python3-pip libpq-dev
+sudo apt-get install -y postgresql postgresql-contrib python3-venv python3-pip libpq-dev
 ```
 
 If you plan to serve directly on port 443 (option A) and do not run the app as
@@ -62,6 +62,8 @@ DATABASE_URL=postgresql+psycopg2://mylibrary:STRONG_NEW_PW@localhost:5432/mylibr
 
 ```bash
 cd /srv/mylibrary
+sudo install -d -o mylibrary -g mylibrary \
+  /srv/mylibrary/static/uploads /srv/mylibrary/var/cover_cache
 sudo -u mylibrary ./run.sh          # creates venv, schemas, tables, Admin user
 # test with curl -k https://localhost, then Ctrl+C
 ```
@@ -82,6 +84,7 @@ DATABASE_URL=postgresql+psycopg2://mylibrary:STRONG_NEW_PW@localhost:5432/mylibr
 ```
 
 - `FLASK_DEBUG` — leave unset in production (debug stays off).
+- `COVER_CACHE_MAX_MB` — on-demand cover-cache limit in MB (default `256`; `0` disables it).
 - Do NOT set `DEV_HTTP`; the app is HTTPS-only by design.
 
 ## 6. Process supervision (systemd)
@@ -134,7 +137,9 @@ find /backups -name 'mylibrary-*.sql.gz' -mtime +30 -delete
 ```
 
 Restore = drop/create DB + schemas, `psql -f dump.sql`, re-run the app
-(`init_db()` no-ops on existing tables).
+(`init_db()` reapplies idempotent migrations). The cover cache under
+`var/cover_cache/` is deliberately not backed up; it is fetched again as covers
+are viewed.
 
 ## 9. Upgrades
 

@@ -35,7 +35,7 @@ KillSignal=SIGTERM
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/srv/mylibrary/static/uploads /srv/mylibrary/instance_secret_key /srv/mylibrary/certs
+ReadWritePaths=/srv/mylibrary/static/uploads /srv/mylibrary/var /srv/mylibrary/instance_secret_key /srv/mylibrary/certs
 
 [Install]
 WantedBy=multi-user.target

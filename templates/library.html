@@ -5,7 +5,7 @@
 <div class="library-header">
   <h1 class="page-title">{% if is_own_shelf %}My Shelf{% else %}{{ owner.username }}'s Shelf{% endif %}</h1>
   <div class="library-meta">
-    <span>{{ entries|length }} book{{ entries|length != 1 and 's' or '' }}</span>
+    <span>{{ pagination.total }} book{{ pagination.total != 1 and 's' or '' }}</span>
     {% if is_own_shelf %}
       <span>·</span><span>Added to the library since joining</span>
     {% endif %}
@@ -45,7 +45,7 @@
     </div>
   </div>
   <datalist id="library-authors">
-    {% for a in authors %}<option value="{{ a }}"></option>{% endfor %}
+    {% for author in authors %}<option value="{{ author }}"></option>{% endfor %}
   </datalist>
 </form>
 
@@ -70,6 +70,8 @@
                   {{ entry.added_at.strftime('%b %Y') }}
                 </div>
               </div>
+              {% set page_parameter = 'page' %}
+              {% include "partials/_pagination.html" %}
             {% else %}
               {% if book.approved %}
                 {% include "partials/_shelf_book.html" %}

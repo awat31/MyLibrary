@@ -38,12 +38,12 @@
     </div>
   </div>
   <datalist id="author-list">
-    {% for a in authors %}<option value="{{ a }}"></option>{% endfor %}
+    {% for author in authors %}<option value="{{ author }}"></option>{% endfor %}
   </datalist>
 </form>
 
 {% if books %}
-  <div class="result-count">{{ books|length }} book{{ books|length != 1 and 's' or '' }} found</div>
+  <div class="result-count">{{ pagination.total }} book{{ pagination.total != 1 and 's' or '' }} found</div>
   <div class="card-grid">
     {% for book in books %}
       <div class="book-card {% if not book.approved %}pending{% endif %}">
@@ -72,6 +72,8 @@
       </div>
     {% endfor %}
   </div>
+  {% set page_parameter = 'page' %}
+  {% include "partials/_pagination.html" %}
 {% else %}
   <div class="empty-note">
     <p>No books match that search.</p>

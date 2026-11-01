@@ -32,6 +32,8 @@
       </a>
     {% endfor %}
   </div>
+  {% set page_parameter = 'readers_page' %}
+  {% include "partials/_pagination.html" %}
 {% else %}
   <div class="empty-note">No readers match that search.</div>
 {% endif %}

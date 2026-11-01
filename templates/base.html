@@ -6,10 +6,6 @@
   <meta name="theme-color" content="#3c2415">
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}MyLibrary{% endblock %}</title>
-  {# Covers are hotlinked from Open Library; warm the connection early
-     so cover images don't each pay DNS+TLS latency before painting. #}
-  <link rel="preconnect" href="https://covers.openlibrary.org">
-  <link rel="dns-prefetch" href="https://covers.openlibrary.org">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <link rel="preload" href="{{ url_for('static', filename='fonts/FrauncesVariable.woff2') }}" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="{{ url_for('static', filename='fonts/InterVariable.woff2') }}" as="font" type="font/woff2" crossorigin>

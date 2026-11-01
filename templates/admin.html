@@ -42,6 +42,9 @@
   {% else %}
     <p class="empty-note">No pending submissions. The in-tray is empty — enjoy the fire.</p>
   {% endif %}
+  {% set pagination = pending_page %}
+  {% set page_parameter = 'pending_page' %}
+  {% include "partials/_pagination.html" %}
 </section>
 
 <section class="admin-section">
@@ -61,7 +64,7 @@
             {% if book.approved %}<span class="status-tag approved">approved</span>
             {% else %}<span class="status-tag pending">pending</span>{% endif %}
           </td>
-          <td>{{ book.owners.count() }}</td>
+          <td>{{ book_counts.get(book.id, 0) }}</td>
           <td class="actions">
             <a href="{{ url_for('book_edit', book_id=book.id) }}" class="btn btn-small btn-ghost">✎ Edit</a>
             <form method="post" action="{{ url_for('admin_delete_book', book_id=book.id) }}" class="inline-form"
@@ -73,6 +76,9 @@
       {% endfor %}
     </tbody>
   </table>
+  {% set pagination = books_page %}
+  {% set page_parameter = 'books_page' %}
+  {% include "partials/_pagination.html" %}
 </section>
 
 <section class="admin-section">
@@ -80,6 +86,7 @@
   <form method="post" action="{{ url_for('admin_set_password') }}" class="filter-row">
     <div class="filter user-col">
       <label>User</label>
+      <span class="hint">Choose from the users on this page.</span>
       <select name="user_id" required>
         <option value="">Choose user…</option>
         {% for u in users %}
@@ -131,5 +138,8 @@
       {% endfor %}
     </tbody>
   </table>
+  {% set pagination = users_page %}
+  {% set page_parameter = 'users_page' %}
+  {% include "partials/_pagination.html" %}
 </section>
 {% endblock %}
