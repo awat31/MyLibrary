@@ -3,8 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#3c2415">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}MyLibrary{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="preload" href="{{ url_for('static', filename='fonts/FrauncesVariable.woff2') }}" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="{{ url_for('static', filename='fonts/InterVariable.woff2') }}" as="font" type="font/woff2" crossorigin>
   <link rel="icon" href="{{ url_for('static', filename='img/favicon.svg') }}">
 </head>
 <body>
@@ -50,7 +54,7 @@
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}
         <div class="flash flash-{{ category }}"><span>{{ message }}</span>
-          <button class="flash-close" onclick="this.parentElement.remove()">×</button>
+          <button class="flash-close" data-dismiss-flash="1">×</button>
         </div>
       {% endfor %}
     {% endwith %}
@@ -66,5 +70,6 @@
       {{ app_name }} — a warm shelf for every book you own. Est. {{ current_year }}
     </div>
   </footer>
+<script src="{{ url_for('static', filename='js/csrf.js') }}" defer></script>
 </body>
 </html>

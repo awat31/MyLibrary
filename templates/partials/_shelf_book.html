@@ -1,6 +1,6 @@
 {% if book.cover_src %}
   <a href="{{ url_for('book_detail', book_id=book.id) }}" class="book" title="{{ book.title }} — {{ book.author }}">
-    <img src="{{ book.cover_src }}" alt="Cover of {{ book.title }}" loading="lazy" onerror="this.closest('.book').classList.add('no-cover');this.remove()">
+    <img src="{{ book.cover_src }}" alt="Cover of {{ book.title }}" loading="lazy" data-fallback-remove="1">
     <span class="book-vertebra"></span>
   </a>
 {% else %}

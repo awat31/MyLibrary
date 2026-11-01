@@ -1,10 +1,35 @@
 """Configuration for MyLibrary."""
 import os
+import secrets
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
+
+def _load_secret_key() -> str:
+    """Session-signing key: env var wins; otherwise a per-install random key
+    stored with 0600 perms (never a hardcoded fallback — a known secret key
+    would let attackers forge admin sessions)."""
+    env_key = os.environ.get("SECRET_KEY")
+    if env_key:
+        return env_key
+    keyfile = os.path.join(BASE_DIR, "instance_secret_key")
+    try:
+        with open(keyfile, "r") as fh:
+            key = fh.read().strip()
+            if len(key) >= 32:
+                return key
+            raise FileNotFoundError
+    except FileNotFoundError:
+        key = secrets.token_hex(32)
+        with open(keyfile, "w") as fh:
+            fh.write(key)
+        os.chmod(keyfile, 0o600)
+        return key
+
+
 class Config:
-    SECRET_KEY = os.environ.get("SECRET_KEY", "change-me-in-production-2f8a1c")
+    # RANDOMLY GENERATED per install (instance_secret_key); override with env var.
+    SECRET_KEY = _load_secret_key()
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL",
         "postgresql+psycopg2://mylibrary:mylibrary_pw@localhost:5432/mylibrary",
@@ -18,3 +43,33 @@ class Config:
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
     MAX_CONTENT_LENGTH = 8 * 1024 * 1024  # 8 MB upload cap
     ALLOWED_COVER_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+    MIN_PASSWORD_LENGTH = 12
+
+    # --- Session/cookie hardening -------------------------------------
+    # Served over HTTPS; mark the session cookie Secure + SameSite.
+    SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+
+    # --- Login brute-force throttle -----------------------------------
+    MAX_LOGIN_ATTEMPTS = 8
+    LOGIN_WINDOW_SECONDS = 900  # 15 minutes
+
+    # --- Security headers ---------------------------------------------
+    SECURE_HEADERS = {
+        "Content-Security-Policy": (
+            "default-src 'self'; "
+            "img-src 'self' data: https:; "
+            "style-src 'self'; "
+            "script-src 'self'; "
+            "connect-src 'self'; "
+            "font-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        ),
+        "X-Frame-Options": "DENY",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+    }

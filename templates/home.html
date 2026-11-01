@@ -3,11 +3,12 @@
 {% block content %}
 <section class="hero">
   <div class="hearth">
-    <h1>Every book you own,<br>finally on one shelf.</h1>
+    <span class="eyebrow">Your personal catalogue</span>
+    <h1>Every book you own,<br><em>finally on one shelf.</em></h1>
     <p class="tagline">
       Catalogue your library down to the last spine — covers, genres, ISBNs, the year it
       was printed and the day it entered your home. Search the catalogue, browse other
-      readers' shelves, and settle in by the fire.
+      readers' shelves, and settle in.
     </p>
     {% if not current_user.is_authenticated %}
       <div class="hero-actions">

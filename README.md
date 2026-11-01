@@ -19,18 +19,32 @@ back to (title + author) when no ISBN is submitted.
 ./run.sh
 ```
 
-The launcher detects first run: it installs a Python venv, creates both schemas,
-seeds the **Admin** user and a small starter catalogue, then serves the site at
-**http://localhost:5000** (bound on 0.0.0.0, so reachable from your LAN).
+The launcher detects first run: it installs a Python venv, generates a
+**self-signed TLS certificate** (`certs/cert.pem`, `certs/key.pem`, covering
+`localhost` and `127.0.0.1`), creates both schemas, seeds the **Admin** user and
+a small starter catalogue, then serves **HTTPS only** with gunicorn at
+**https://localhost:5000** (bound on 0.0.0.0, so reachable from your LAN).
+
+Your browser will show a warning because the certificate is self-signed — this
+is expected. Accept/bypass it, or import `certs/cert.pem` as a trusted root
+on client machines.
 
 Manual equivalent:
 
 ```bash
 python3 -m venv venv && venv/bin/pip install -r requirements.txt
 venv/bin/python seed.py          # Admin + sample books
-venv/bin/python app.py           # dev server (debug)
-# or: venv/bin/python -m flask --app app run --host 0.0.0.0 --port 5000
+./run.sh                         # HTTPS server
+# dev alternative over plain HTTP:
+venv/bin/python app.py
 ```
+
+### Passwords
+
+- Users change their own password under **Profile → Password** (requires the
+  current password, minimum 12 characters).
+- The Admin can reset any user's password from the dashboard:
+  **Admin → Reset a user's password**.
 
 ### Admin account
 
@@ -38,9 +52,10 @@ venv/bin/python app.py           # dev server (debug)
 |---|---|
 | `Admin` | `Admin123!` |
 
-> ⚠️ Change this after first login for anything beyond local use.
-> The Admin is fully privileged: approve/reject submissions, edit/delete any book,
-> delete users, promote/demote other admins, and bypass approval when adding books.
+> ⚠️ Change this after first login (Profile → Password) for anything beyond
+> local use. The Admin is fully privileged: approve/reject submissions,
+> edit/delete any book, delete users, promote/demote other admins, reset
+> passwords, and bypass approval when adding books.
 
 ## What users can do
 
@@ -58,6 +73,20 @@ venv/bin/python app.py           # dev server (debug)
   unlimited), description, and a cover via **file upload or image URL**.
   Submissions land in the Admin's queue; the book appears on the submitter's shelf
   as pending immediately, but stays invisible to everyone else until approved.
+
+## Security hardening (post-pentest)
+
+- Session cookies: `Secure`, `HttpOnly`, `SameSite=Lax`
+- CSRF tokens on every state-changing POST (`before_request` check; injected
+  client-side from the per-session `<meta>` token by `static/js/csrf.js`)
+- Login throttling: >8 failed attempts per IP+username in 15 min → HTTP 429
+- Security headers on every response: CSP (`script-src 'self'`), X-Frame-Options
+  DENY, nosniff, Referrer-Policy, HSTS
+- Secret key: random per-install file (`instance_secret_key`, chmod 600) or the
+  `SECRET_KEY` env var — never a hardcoded fallback
+- Open-redirect guard on the login `?next=` parameter (site-relative paths only)
+- Cover image URLs restricted to `http(s)://`
+- Search wildcards (`%`, `_`) are escaped — input always matches literally
 
 ## Layout of the code
 

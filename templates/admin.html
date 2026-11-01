@@ -32,7 +32,7 @@
                 <button class="btn btn-small btn-primary">✓ Approve</button>
               </form>
               <form method="post" action="{{ url_for('admin_reject', book_id=book.id) }}" class="inline-form"
-                    onsubmit="return confirm('Reject and delete this submission?')">
+                    data-confirm="Reject and delete this submission?">
                 <button class="btn btn-small btn-ghost">✕ Reject</button>
               </form>
             </td>
@@ -66,7 +66,7 @@
           <td class="actions">
             <a href="{{ url_for('book_edit', book_id=book.id) }}" class="btn btn-small btn-ghost">✎ Edit</a>
             <form method="post" action="{{ url_for('admin_delete_book', book_id=book.id) }}" class="inline-form"
-                  onsubmit="return confirm('Delete “{{ book.title }}” permanently?')">
+                  data-confirm="Delete this book permanently?">
               <button class="btn btn-small btn-danger">🗑 Delete</button>
             </form>
           </td>
@@ -74,6 +74,32 @@
       {% endfor %}
     </tbody>
   </table>
+</section>
+
+<section class="admin-section">
+  <h2 class="section-title">✎ Reset a user's password</h2>
+  <form method="post" action="{{ url_for('admin_set_password') }}" class="filter-row">
+    <div class="filter user-col">
+      <label>User</label>
+      <select name="user_id" required>
+        <option value="">Choose user…</option>
+        {% for u in users %}
+          <option value="{{ u.id }}">{{ u.username }}{% if u.is_admin %} (Admin){% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter">
+      <label>New password <span class="hint">(min {{ min_pw_length }} chars)</span></label>
+      <input type="password" name="password" required minlength="{{ min_pw_length }}" autocomplete="new-password">
+    </div>
+    <div class="filter">
+      <label>Confirm</label>
+      <input type="password" name="confirm" required minlength="{{ min_pw_length }}" autocomplete="new-password">
+    </div>
+    <div class="filter filter-actions">
+      <button class="btn btn-primary">Set password</button>
+    </div>
+  </form>
 </section>
 
 <section class="admin-section">
@@ -97,7 +123,7 @@
             {% endif %}
             {% if not u.is_admin and u.id != current_user.id %}
               <form method="post" action="{{ url_for('admin_delete_user', user_id=u.id) }}" class="inline-form"
-                    onsubmit="return confirm('Delete user {{ u.username }} and their shelf?')">
+                    data-confirm="Delete this user and their shelf?">
                 <button class="btn btn-small btn-danger">🗑 Delete</button>
               </form>
             {% endif %}

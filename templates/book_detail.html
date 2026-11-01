@@ -14,7 +14,7 @@
     <div class="detail-actions">
       {% if book.id in owned_ids %}
         <form method="post" action="{{ url_for('library_remove', book_id=book.id) }}"
-              onsubmit="return confirm('Remove this book from your shelf?')">
+              data-confirm="Remove this book from your shelf?">
           <button type="submit" class="btn btn-ghost">✕ Remove from my shelf</button>
         </form>
       {% elif book.approved or book.submitted_by_id == current_user.id %}

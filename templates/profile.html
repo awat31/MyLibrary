@@ -7,6 +7,23 @@
   <p class="auth-sub">Member since {{ current_user.created_at.strftime('%B %Y') }} ·
     {{ shelf_count }} book{{ shelf_count != 1 and 's' or '' }} shelved</p>
 
+  <form method="post" class="settings-panel" autocomplete="off">
+    <h2 class="settings-title">Password</h2>
+    <div class="stack-form">
+      <label>Current password
+        <input type="password" name="current_password" autocomplete="current-password" required>
+      </label>
+      <label>New password <span class="hint">(at least {{ min_pw_length }} characters)</span>
+        <input type="password" name="new_password" autocomplete="new-password" required minlength="{{ min_pw_length }}">
+      </label>
+      <label>Confirm new password
+        <input type="password" name="confirm" autocomplete="new-password" required minlength="{{ min_pw_length }}">
+      </label>
+    </div>
+    <input type="hidden" name="action" value="password">
+    <button type="submit" class="btn btn-wood">Update password</button>
+  </form>
+
   <form method="post" class="settings-panel">
     <h2 class="settings-title">Privacy</h2>
     <label class="check-label setting-row">

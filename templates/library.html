@@ -51,8 +51,7 @@
 
 {% if entries %}
   {% set per_shelf = 6 %}
-  {% set shelves = (entries|length + per_shelf - 1) // per_shelf %}
-  <div class="book-case" style="max-shelves: {{ shelves }};">
+  <div class="book-case">
     {% for shelf in entries|batch(per_shelf) %}
       <div class="shelf-row">
         <div class="shelf">
@@ -64,7 +63,7 @@
                   <span class="pending-badge" title="Awaiting Admin approval">⧗ Pending</span>
                 {% endif %}
                 <form method="post" action="{{ url_for('library_remove', book_id=book.id) }}"
-                      class="book-remove" onsubmit="return confirm('Remove “{{ book.title }}” from your shelf?')">
+                      class="book-remove" data-confirm="Remove this book from your shelf?">
                   <button type="submit" title="Remove from shelf">×</button>
                 </form>
                 <div class="book-added" title="Added to your library">

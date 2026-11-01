@@ -9,11 +9,11 @@
     <label>Username
       <input type="text" name="username" required autofocus maxlength="64" autocomplete="username">
     </label>
-    <label>Password <span class="hint">(at least 6 characters)</span>
-      <input type="password" name="password" required minlength="6" autocomplete="new-password">
+    <label>Password <span class="hint">(at least {{ min_pw_length }} characters)</span>
+      <input type="password" name="password" required minlength="{{ min_pw_length }}" autocomplete="new-password">
     </label>
     <label>Confirm password
-      <input type="password" name="confirm" required minlength="6" autocomplete="new-password">
+      <input type="password" name="confirm" required minlength="{{ min_pw_length }}" autocomplete="new-password">
     </label>
     <button type="submit" class="btn btn-primary btn-block">Join the Library</button>
   </form>

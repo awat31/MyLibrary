@@ -4,13 +4,15 @@ MyLibrary — a bookshelf-style personal library web app.
 Run with:  ./run.sh   (or)   venv/bin/python app.py
 """
 import os
+import secrets
+import time
 import unicodedata
 import uuid
 from datetime import datetime
 
 from flask import (
     Flask, render_template, redirect, url_for, request, flash, abort,
-    send_from_directory, current_app,
+    send_from_directory, current_app, session, get_flashed_messages,
 )
 from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user,
@@ -20,6 +22,8 @@ from werkzeug.utils import secure_filename
 
 from config import Config
 from models import db, ensure_schemas, User, Book, Genre, LibraryEntry, book_genres
+
+MIN_PW = Config.MIN_PASSWORD_LENGTH
 
 
 # --------------------------------------------------------------------------
@@ -47,7 +51,64 @@ def inject_globals():
     return {
         "current_year": datetime.now().year,
         "app_name": "MyLibrary",
+        "min_pw_length": app.config["MIN_PASSWORD_LENGTH"],
     }
+
+
+# --------------------------------------------------------------------------
+# Security pipeline: CSRF, login throttling, security headers
+# --------------------------------------------------------------------------
+def _csrf_token() -> str:
+    """Per-session CSRF token; created on demand via the layout <meta> tag
+    and injected into every <form> by /static/js/csrf.js before submission."""
+    if "_csrf_token" not in session:
+        session["_csrf_token"] = secrets.token_hex(16)
+    return session["_csrf_token"]
+
+
+app.jinja_env.globals["csrf_token"] = _csrf_token
+
+
+@app.before_request
+def csrf_protect():
+    """Every state-changing request must present the per-session token
+    (form field `csrf_token` or header `X-CSRFToken`)."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        sent = request.form.get("csrf_token") or request.headers.get("X-CSRFToken")
+        if not sent or not secrets.compare_digest(
+                sent, session.get("_csrf_token", "")):
+            abort(400, "CSRF token missing or invalid.")
+
+
+_login_attempts: dict[str, list[float]] = {}
+
+
+def _login_is_throttled(key: str) -> bool:
+    """Sliding-window throttle on failed sign-ins (per IP + username)."""
+    now = time.time()
+    window = app.config["LOGIN_WINDOW_SECONDS"]
+    hits = [t for t in _login_attempts.get(key, []) if now - t < window]
+    _login_attempts[key] = hits
+    return len(hits) >= app.config["MAX_LOGIN_ATTEMPTS"]
+
+
+def _record_failed_login(key: str):
+    now = time.time()
+    window = app.config["LOGIN_WINDOW_SECONDS"]
+    hits = [t for t in _login_attempts.get(key, []) if now - t < window]
+    hits.append(now)
+    _login_attempts[key] = hits
+
+
+def _clear_failed_logins(key: str):
+    _login_attempts.pop(key, None)
+
+
+@app.after_request
+def apply_security_headers(response):
+    for name, value in app.config["SECURE_HEADERS"].items():
+        response.headers[name] = value
+    return response
 
 
 # --------------------------------------------------------------------------
@@ -67,6 +128,11 @@ def slug_for_spine(text: str) -> int:
 
 
 app.jinja_env.globals["spine_variant"] = slug_for_spine
+
+
+def like_escape(raw: str) -> str:
+    """Escape LIKE wildcards so user input matches literally, not as patterns."""
+    return raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def parse_genres(raw: str):
@@ -149,7 +215,8 @@ def search_books(
         except (TypeError, ValueError):
             pass
     if q:
-        like = f"%{q}%"
+        like = f"%{like_escape(q)}%"
+        escape_kw = "\\"
         genre_alias = db.aliased(Genre)
         query = (
             query.join(
@@ -158,13 +225,14 @@ def search_books(
             .join(genre_alias, genre_alias.id == book_genres.c.genre_id, isouter=True)  # noqa: E501
             .filter(
                 or_(
-                    Book.title.ilike(like),
-                    Book.author.ilike(like),
-                    func.coalesce(Book.publisher, "").ilike(like),
-                    Book.description.ilike(like),
-                    Book.isbn.ilike(f"%{q}%"),
-                    cast(Book.published_year, String).ilike(f"%{q}%"),
-                    func.coalesce(genre_alias.name, "").ilike(like),
+                    Book.title.ilike(like, escape=escape_kw),
+                    Book.author.ilike(like, escape=escape_kw),
+                    func.coalesce(Book.publisher, "").ilike(like, escape=escape_kw),
+                    Book.description.ilike(like, escape=escape_kw),
+                    Book.isbn.ilike(f"%{like_escape(q)}%", escape=escape_kw),
+                    cast(Book.published_year, String).ilike(
+                        f"%{like_escape(q)}%", escape=escape_kw),
+                    func.coalesce(genre_alias.name, "").ilike(like, escape=escape_kw),
                 )
             )
             .distinct()
@@ -200,6 +268,17 @@ def delete_cover_file(filename: str):
             os.remove(path)
 
 
+def safe_cover_url(raw: str) -> str | None:
+    """External covers must be http(s) URLs (blocks javascript:, data:, file:)."""
+    cleaned = clean_search(raw)
+    if cleaned and cleaned.lower().startswith(("http://", "https://")):
+        return cleaned
+    if cleaned:
+        flash("Cover URL ignored — only http:// and https:// links are allowed.",
+              "error")
+    return None
+
+
 def form_to_book_data(form):
     return {
         "title": clean_search(form.get("title")),
@@ -209,7 +288,7 @@ def form_to_book_data(form):
         "isbn": normalize_isbn(form.get("isbn")) or None,
         "description": clean_search(form.get("description")) or None,
         "genres": parse_genres(form.get("genres")),
-        "cover_url": clean_search(form.get("cover_url")) or None,
+        "cover_url": safe_cover_url(form.get("cover_url")),
     }
 
 
@@ -278,8 +357,8 @@ def register():
         confirm = request.form.get("confirm", "")
         if not username or len(username) > 64:
             flash("Please choose a username (max 64 characters).", "error")
-        elif not password or len(password) < 6:
-            flash("Password must be at least 6 characters.", "error")
+        elif not password or len(password) < MIN_PW:
+            flash(f"Password must be at least {MIN_PW} characters.", "error")
         elif password != confirm:
             flash("Passwords do not match.", "error")
         elif User.query.filter_by(username_lower=username.lower()).first():
@@ -301,12 +380,24 @@ def login():
         return redirect(url_for("home"))
     if request.method == "POST":
         username = clean_search(request.form.get("username"))
+        # Throttle: too many recent failures from this IP+username -> refuse.
+        throttle_key = f"{request.remote_addr}:{username.lower()}"
+        if _login_is_throttled(throttle_key):
+            flash("Too many failed sign-in attempts — please wait 15 minutes.",
+                  "error")
+            return render_template("login.html"), 429
         user = User.query.filter_by(username_lower=username.lower()).first()
         if user and user.check_password(request.form.get("password", "")):
+            _clear_failed_logins(throttle_key)
             login_user(user, remember=bool(request.form.get("remember")))
             flash(f"Welcome back, {user.username}!", "success")
             nxt = request.args.get("next")
-            return redirect(nxt if nxt and nxt.startswith("/") else url_for("my_library"))
+            # Open-redirect guard: only real site-relative paths allowed.
+            if nxt and (not nxt.startswith("/") or nxt.startswith("//")
+                        or "\\" in nxt):
+                nxt = None
+            return redirect(nxt or url_for("my_library"))
+        _record_failed_login(throttle_key)
         flash("Invalid username or password.", "error")
     return render_template("login.html")
 
@@ -350,6 +441,7 @@ def search():
 @app.route("/profile", methods=["GET", "POST"])
 @login_required
 def profile():
+    shelf_count = current_user.library.count()
     if request.method == "POST":
         action = request.form.get("action")
         if action == "visibility":
@@ -359,9 +451,22 @@ def profile():
                 flash("You are now visible in the Readers list.", "success")
             else:
                 flash("You are now hidden from the Readers list — "
-                      "readers can still find you by direct link.", "success")
+                      "your shelf is viewable only by you and the Admin.", "success")
+        elif action == "password":
+            current_pw = request.form.get("current_password", "")
+            new_pw = request.form.get("new_password", "")
+            confirm = request.form.get("confirm", "")
+            if not current_user.check_password(current_pw):
+                flash("Your current password is incorrect.", "error")
+            elif len(new_pw) < MIN_PW:
+                flash(f"New password must be at least {MIN_PW} characters.", "error")
+            elif new_pw != confirm:
+                flash("New passwords do not match.", "error")
+            else:
+                current_user.set_password(new_pw)
+                db.session.commit()
+                flash("Password updated.", "success")
         return redirect(url_for("profile"))
-    shelf_count = current_user.library.count()
     return render_template("profile.html", shelf_count=shelf_count)
 
 
@@ -688,6 +793,29 @@ def admin_delete_user(user_id: int):
     return redirect(url_for("admin"))
 
 
+@app.route("/admin/set-password", methods=["POST"])
+@login_required
+def admin_set_password():
+    require_admin()
+    user_id = request.form.get("user_id", "")
+    user = db.session.get(User, int(user_id)) if user_id.isdigit() else None
+    if not user:
+        flash("Pick a user first.", "error")
+        return redirect(url_for("admin"))
+    new_pw = request.form.get("password", "")
+    confirm = request.form.get("confirm", "")
+    if len(new_pw) < MIN_PW:
+        flash(f"Password must be at least {MIN_PW} characters.", "error")
+    elif new_pw != confirm:
+        flash("Passwords do not match.", "error")
+    else:
+        user.set_password(new_pw)
+        db.session.commit()
+        flash(f"Password reset for “{user.username}”. "
+              "Share the new password with them securely.", "success")
+    return redirect(url_for("admin"))
+
+
 @app.route("/admin/toggle-admin/<int:user_id>", methods=["POST"])
 @login_required
 def admin_toggle_admin(user_id: int):
@@ -749,4 +877,14 @@ def _migrate(engine):
 
 if __name__ == "__main__":
     init_db()
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    if os.environ.get("DEV_HTTP") == "1":
+        # Plain-HTTP dev mode: browsers refuse Secure cookies, so relax them.
+        app.config["SESSION_COOKIE_SECURE"] = False
+        app.config["SECURE_HEADERS"] = {
+            k: v for k, v in app.config["SECURE_HEADERS"].items()
+            if k != "Content-Security-Policy"  # inline dev conveniences only
+        }
+        print("⚠️  DEV_HTTP=1: serving PLAIN HTTP with relaxed cookie flags — "
+              "for local development only.")
+    app.run(host="0.0.0.0", port=5000,
+            debug=bool(os.environ.get("FLASK_DEBUG")))
