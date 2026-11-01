@@ -411,6 +411,9 @@ def my_library():
 def readers():
     q = clean_search(request.args.get("q"))
     query = User.query.filter_by(is_searchable=True)
+    if not current_user.is_admin:
+        # Admin accounts are staff, not readers — hidden from the list.
+        query = query.filter(User.is_admin.is_(False))
     if q:
         query = query.filter(User.username_lower.ilike(f"%{q.lower()}%"))
     users = query.order_by(User.username_lower).all()
@@ -435,6 +438,15 @@ def readers():
 def reader_library(user_id: int):
     owner = db.session.get(User, user_id)
     if not owner:
+        abort(404)
+    # Hidden users' and admin accounts' shelves are only open to the owner
+    # and to Admins — everyone else gets a plain 404, so URL guessing
+    # reveals nothing.
+    if (
+        (not owner.is_searchable or owner.is_admin)
+        and owner.id != current_user.id
+        and not current_user.is_admin
+    ):
         abort(404)
     return _library_view(owner)
 
@@ -470,6 +482,29 @@ def library_remove(book_id: int):
         db.session.commit()
         flash(f"Removed “{book.title if book else 'book'}” from your shelf.", "success")
     return redirect(request.referrer or url_for("my_library"))
+
+
+# --------------------------------------------------------------------------
+# Themed errors
+# --------------------------------------------------------------------------
+@app.errorhandler(404)
+def not_found(e):
+    is_reader_url = request.path.startswith("/readers")
+    if is_reader_url:
+        title, message, trail = (
+            "Reader not found",
+            "No reader lives at that corner of the library. The shelf number "
+            "may be wrong, their profile may be hidden, or they were never here at all.",
+            "Try browsing the Readers list instead.",
+        )
+    else:
+        title, message, trail = (
+            "This page has been loaned out",
+            "We looked in every aisle, but whatever you were after isn't on the "
+            "shelves. The link may be old, mistyped, or quietly retired.",
+            "Head back to your shelf and try again from there.",
+        )
+    return render_template("error_404.html", err_title=title, message=message, trail=trail), 404
 
 
 # --------------------------------------------------------------------------

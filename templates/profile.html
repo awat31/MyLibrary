@@ -14,7 +14,7 @@
              {% if current_user.is_searchable %}checked{% endif %}>
       <span>
         Show me in the <a href="{{ url_for('readers') }}">Readers</a> list
-        <span class="hint">Unchecking hides your profile from the list — other readers can still open your shelf through a direct link.</span>
+        <span class="hint">Unchecking hides your profile from the list and makes your shelf viewable only by you and the Admin — anyone else trying your shelf link gets a 404.</span>
       </span>
     </label>
     <input type="hidden" name="action" value="visibility">

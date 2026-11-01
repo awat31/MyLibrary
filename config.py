@@ -4,7 +4,7 @@ import os
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 class Config:
-    SECRET_KEY = os.environ.get("SECRET_KEY", "change-me-in-production")
+    SECRET_KEY = os.environ.get("SECRET_KEY", "change-me-in-production-2f8a1c")
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL",
         "postgresql+psycopg2://mylibrary:mylibrary_pw@localhost:5432/mylibrary",

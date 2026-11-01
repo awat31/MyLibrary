@@ -36,7 +36,7 @@
           <div class="user-chip" title="Signed in">
             <span class="user-avatar">{{ current_user.username[0]|upper }}</span>
             <a href="{{ url_for('profile') }}" class="username profile-link">{{ current_user.username }}</a>
-            <a href="{{ url_for('logout') }}" class="logout" title="Sign out">⊣</a>
+            <a href="{{ url_for('logout') }}" class="signout-btn">Sign Out</a>
           </div>
         {% else %}
           <a href="{{ url_for('login') }}" class="nav-link">Sign In</a>
