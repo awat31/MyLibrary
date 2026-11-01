@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Search the Catalogue — MyLibrary{% endblock %}
+{% block page_class %}page-search{% endblock %}
+{% block content %}
+<h1 class="page-title">Search the Catalogue</h1>
+<p class="page-sub">Find books in the public catalogue, then add them straight to your shelf.</p>
+
+<form method="get" class="filter-bar">
+  <div class="filter-row">
+    <div class="filter keyword">
+      <label>Keyword</label>
+      <input type="search" name="q" value="{{ filters.q }}" placeholder="Title, author, ISBN, genre, anything…">
+    </div>
+    <div class="filter">
+      <label>Author</label>
+      <input type="text" name="author" value="{{ filters.author }}" list="author-list" placeholder="Any author">
+    </div>
+    <div class="filter">
+      <label>Genre</label>
+      <select name="genre">
+        <option value="">Any genre</option>
+        {% for g in genres %}
+          <option value="{{ g.name }}" {% if filters.genre|lower == g.name|lower %}selected{% endif %}>{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter year">
+      <label>Published from</label>
+      <input type="number" name="year_min" value="{{ filters.year_min }}" min="-800" max="2100" placeholder="e.g. 1900">
+    </div>
+    <div class="filter year">
+      <label>to</label>
+      <input type="number" name="year_max" value="{{ filters.year_max }}" min="-800" max="2100" placeholder="e.g. 2026">
+    </div>
+    <div class="filter filter-actions">
+      <button type="submit" class="btn btn-primary">Search</button>
+      <a href="{{ url_for('search') }}" class="btn btn-ghost">Clear</a>
+    </div>
+  </div>
+  <datalist id="author-list">
+    {% for a in authors %}<option value="{{ a }}"></option>{% endfor %}
+  </datalist>
+</form>
+
+{% if books %}
+  <div class="result-count">{{ books|length }} book{{ books|length != 1 and 's' or '' }} found</div>
+  <div class="card-grid">
+    {% for book in books %}
+      <div class="book-card {% if not book.approved %}pending{% endif %}">
+        <a href="{{ url_for('book_detail', book_id=book.id) }}" class="book-card-cover">
+          {% if book.cover_src %}
+            <img src="{{ book.cover_src }}" alt="Cover of {{ book.title }}" loading="lazy">
+          {% else %}
+            <div class="book-card-cover-fallback spine-{{ spine_variant(book.title) }}">
+              <span>{{ book.title }}</span>
+            </div>
+          {% endif %}
+        </a>
+        <div class="book-card-body">
+          <h3><a href="{{ url_for('book_detail', book_id=book.id) }}">{{ book.title }}</a></h3>
+          <div class="book-card-author">{{ book.author }}</div>
+          <div class="book-card-meta">
+            {% if book.published_year %}<span>{{ book.published_year }}</span>{% endif %}
+            {% for g in book.genres[:2] %}<span class="genre-pill">{{ g.name }}</span>{% endfor %}
+          </div>
+          {% if book.id not in owned_ids %}
+            {% include "partials/_add_button.html" %}
+          {% else %}
+            <span class="on-shelf-tag">✓ On your shelf</span>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-note">
+    <p>No books match that search.</p>
+    <p>Can't find it in the catalogue? <a href="{{ url_for('submit') }}">Submit it yourself</a> — the Admin will review it.</p>
+  </div>
+{% endif %}
+{% endblock %}

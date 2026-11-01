@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}My Profile — MyLibrary{% endblock %}
+{% block content %}
+<div class="auth-card profile-card">
+  <span class="user-avatar big">{{ current_user.username[0]|upper }}</span>
+  <h1>{{ current_user.username }}</h1>
+  <p class="auth-sub">Member since {{ current_user.created_at.strftime('%B %Y') }} ·
+    {{ shelf_count }} book{{ shelf_count != 1 and 's' or '' }} shelved</p>
+
+  <form method="post" class="settings-panel">
+    <h2 class="settings-title">Privacy</h2>
+    <label class="check-label setting-row">
+      <input type="checkbox" name="is_searchable" value="1"
+             {% if current_user.is_searchable %}checked{% endif %}>
+      <span>
+        Show me in the <a href="{{ url_for('readers') }}">Readers</a> list
+        <span class="hint">Unchecking hides your profile from the list — other readers can still open your shelf through a direct link.</span>
+      </span>
+    </label>
+    <input type="hidden" name="action" value="visibility">
+    <button type="submit" class="btn btn-primary btn-block">Save settings</button>
+  </form>
+</div>
+{% endblock %}

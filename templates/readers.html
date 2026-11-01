@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Readers — MyLibrary{% endblock %}
+{% block content %}
+<h1 class="page-title">Readers</h1>
+<p class="page-sub">Find a reader and browse the books on their shelf.</p>
+
+<form method="get" class="filter-bar">
+  <div class="filter-row">
+    <div class="filter keyword">
+      <label>Username</label>
+      <input type="search" name="q" value="{{ q }}" placeholder="Search readers…">
+    </div>
+    <div class="filter filter-actions">
+      <button type="submit" class="btn btn-primary">Search</button>
+      <a href="{{ url_for('readers') }}" class="btn btn-ghost">Clear</a>
+    </div>
+  </div>
+</form>
+
+{% if users %}
+  <div class="reader-grid">
+    {% for u in users %}
+      <a href="{{ url_for('reader_library', user_id=u.id) }}" class="reader-card">
+        <span class="user-avatar big">{{ u.username[0]|upper }}</span>
+        <div>
+          <div class="reader-name">{{ u.username }}
+            {% if u.is_admin %}<span class="admin-tag">Admin</span>{% endif %}
+            {% if current_user.is_admin and not u.is_searchable %}<span class="hidden-tag">hidden</span>{% endif %}
+          </div>
+          <div class="reader-count">{{ counts.get(u.id, 0) }} book{{ counts.get(u.id, 0) != 1 and 's' or '' }} shelved</div>
+        </div>
+      </a>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-note">No readers match that search.</div>
+{% endif %}
+{% endblock %}

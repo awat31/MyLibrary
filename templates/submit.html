@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ editing and 'Edit Book' or 'Submit a Book' }} — MyLibrary{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ editing and 'Edit Book' or 'Submit a New Book' }}</h1>
+<p class="page-sub">
+  {% if editing %}
+    As Admin you can edit any record in the catalogue.
+  {% else %}
+    If the book isn't in the catalogue yet, submit it here. Your submission goes to the
+    <strong>Admin</strong> for approval — meanwhile it appears on your shelf marked
+    <span class="pending-badge-inline">⧗ pending</span>.
+  {% endif %}
+</p>
+
+{% if editing or not duplicate %}
+{% if not editing and duplicates_note %}{% endif %}
+<form method="post" enctype="multipart/form-data" class="submit-form">
+  <div class="form-grid">
+    <label>Title *
+      <input type="text" name="title" required maxlength="255"
+             value="{{ (editing and book.title) or (form_data.get('title') if form_data else '') }}">
+    </label>
+    <label>Author *
+      <input type="text" name="author" required maxlength="255"
+             value="{{ (editing and book.author) or (form_data.get('author') if form_data else '') }}">
+    </label>
+    <label>Publisher
+      <input type="text" name="publisher" maxlength="255"
+             value="{{ (editing and book.publisher) or (form_data.get('publisher') if form_data else '') }}">
+    </label>
+    <label>Published year
+      <input type="number" name="published_year" min="-800" max="2100"
+             value="{{ (editing and book.published_year) or (form_data.get('published_year') if form_data else '') }}">
+    </label>
+    <label>ISBN <span class="hint">(unique — this is how we keep one record per book)</span>
+      <input type="text" name="isbn" maxlength="32" inputmode="numeric"
+             value="{{ (editing and book.isbn) or (form_data.get('isbn') if form_data else '') }}">
+    </label>
+    <label>Genres / categories <span class="hint">(comma separated — as many as you like)</span>
+      <input type="text" name="genres" list="genre-list"
+             value="{{ (editing and book.genre_names|join(', ')) or (form_data.get('genres') if form_data else '') }}"
+             placeholder="Fantasy, Romance, Science…">
+      <datalist id="genre-list">
+        {% for g in genres %}<option value="{{ g.name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="full-width">Description
+      <textarea name="description" rows="6">{{ (editing and book.description) or (form_data.get('description') if form_data else '') }}</textarea>
+    </label>
+    <label>Cover image (upload) <span class="hint">png, jpg, webp — max 8 MB</span>
+      <input type="file" name="cover" accept=".png,.jpg,.jpeg,.webp,.gif">
+      {% if editing and book.cover_filename %}<span class="hint">Current cover: {{ book.cover_filename }}</span>{% endif %}
+    </label>
+    <label>Cover image (or paste a URL)
+      <input type="url" name="cover_url" placeholder="https://…"
+             value="{{ (editing and book.cover_url) or (form_data.get('cover_url') if form_data else '') }}">
+    </label>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">
+      {{ editing and 'Save changes' or 'Submit for approval' }}
+    </button>
+    <a href="{{ url_for('home') }}" class="btn btn-ghost">Cancel</a>
+  </div>
+</form>
+{% endif %}
+
+{% if duplicate %}
+  <div class="duplicate-box">
+    <h2>Good news — we already have this one</h2>
+    <p>A record for <em>{{ duplicate.title }}</em> by {{ duplicate.author }}
+      {% if duplicate.isbn %}(ISBN {{ duplicate.isbn }}){% endif %} already exists, so only one
+      copy is kept in the catalogue.</p>
+    <div class="form-actions">
+      <a href="{{ url_for('book_detail', book_id=duplicate.id) }}" class="btn btn-primary">Open the book's page</a>
+      <a href="{{ url_for('search') }}" class="btn btn-ghost">Search the catalogue</a>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

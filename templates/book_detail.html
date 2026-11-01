@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}{{ book.title }} — MyLibrary{% endblock %}
+{% block content %}
+<div class="detail-layout">
+  <div class="detail-cover">
+    {% if book.cover_src %}
+      <img class="standalone-cover" src="{{ book.cover_src }}" alt="Cover of {{ book.title }}">
+    {% else %}
+      <div class="standalone-cover spine-{{ spine_variant(book.title) }} spine-large">
+        <span class="spine-title">{{ book.title }}</span>
+        <span class="spine-author">{{ book.author }}</span>
+      </div>
+    {% endif %}
+    <div class="detail-actions">
+      {% if book.id in owned_ids %}
+        <form method="post" action="{{ url_for('library_remove', book_id=book.id) }}"
+              onsubmit="return confirm('Remove this book from your shelf?')">
+          <button type="submit" class="btn btn-ghost">✕ Remove from my shelf</button>
+        </form>
+      {% elif book.approved or book.submitted_by_id == current_user.id %}
+        <form method="post" action="{{ url_for('library_add', book_id=book.id) }}">
+          <button type="submit" class="btn btn-wood">＋ Add to my shelf</button>
+        </form>
+      {% endif %}
+      {% if current_user.is_admin %}
+        <a href="{{ url_for('book_edit', book_id=book.id) }}" class="btn btn-ghost">✎ Edit</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="detail-info">
+    {% if not book.approved %}
+      <div class="pending-banner">⧗ Pending approval — visible only on your shelf until the Admin approves it.</div>
+    {% endif %}
+    <h1 class="detail-title">{{ book.title }}</h1>
+    <div class="detail-author">by <em>{{ book.author }}</em></div>
+
+    {% if book.genres %}
+      <div class="detail-genres">
+        {% for g in book.genres %}<span class="genre-pill">{{ g.name }}</span>{% endfor %}
+      </div>
+    {% endif %}
+
+    <dl class="property-list">
+      <div><dt>Published</dt><dd>{{ book.published_year or '—' }}</dd></div>
+      <div><dt>Publisher</dt><dd>{{ book.publisher or '—' }}</dd></div>
+      <div><dt>ISBN</dt><dd class="mono">{{ book.isbn or '—' }}</dd></div>
+      <div><dt>In libraries</dt>
+        <dd>{% if holder_count is not none %}{{ holder_count }} reader{{ holder_count != 1 and 's' or '' }}{% else %}Just yours (pending){% endif %}</dd></div>
+      <div><dt>Added to catalogue</dt><dd>{{ book.created_at.strftime('%d %b %Y') }}</dd></div>
+      {% if current_user.is_admin and book.submitted_by %}
+        <div><dt>Submitted by</dt><dd>{{ book.submitted_by.username }}</dd></div>
+      {% endif %}
+    </dl>
+
+    {% if book.description %}
+      <h2 class="detail-heading">Description</h2>
+      <p class="detail-description">{{ book.description }}</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

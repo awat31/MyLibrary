@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}MyLibrary — your books, on the shelf where they belong{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="hearth">
+    <h1>Every book you own,<br>finally on one shelf.</h1>
+    <p class="tagline">
+      Catalogue your library down to the last spine — covers, genres, ISBNs, the year it
+      was printed and the day it entered your home. Search the catalogue, browse other
+      readers' shelves, and settle in by the fire.
+    </p>
+    {% if not current_user.is_authenticated %}
+      <div class="hero-actions">
+        <a href="{{ url_for('register') }}" class="btn btn-primary">Create an account</a>
+        <a href="{{ url_for('login') }}" class="btn btn-ghost">Sign in</a>
+      </div>
+    {% else %}
+      <div class="hero-actions">
+        <a href="{{ url_for('my_library') }}" class="btn btn-primary">View my shelf</a>
+        <a href="{{ url_for('submit') }}" class="btn btn-ghost">Add a book</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="hearth-side">
+    <div class="stat-cards">
+      <div class="stat-card">
+        <div class="stat-number">{{ stats.books }}</div>
+        <div class="stat-label">Books catalogued</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">{{ stats.users }}</div>
+        <div class="stat-label">Readers</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">{{ stats.shelved }}</div>
+        <div class="stat-label">Books shelved</div>
+      </div>
+    </div>
+    <div class="hearth-note">
+      New to the catalogue this week —
+      {% if recent_books %}
+        {% for b in recent_books[:3] %}
+          <em>{{ b.title }}</em>{% if not loop.last %}, {% endif %}
+        {% endfor %}
+      {% else %}
+        <em>the shelves are waiting for their first books.</em>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="home-shelf-section">
+  <h2 class="section-title">Recently added to the catalogue</h2>
+  {% if recent_books %}
+    {% for shelf in recent_books|batch(4) %}
+      <div class="shelf-row">
+        <div class="shelf">
+          {% for book in shelf %}
+            {% include "partials/_shelf_book.html" %}
+          {% endfor %}
+        </div>
+        <div class="shelf-board"></div>
+      </div>
+    {% endfor %}
+    <p class="shelf-hint">Sign in to search the full catalogue and open any book's page.</p>
+  {% else %}
+    <p class="empty-note">The catalogue is empty — the first submissions are being reviewed by the Admin.</p>
+  {% endif %}
+</section>
+{% endblock %}

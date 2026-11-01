@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}{{ is_own_shelf and 'My Shelf' or owner.username ~ "'s Shelf" }} — MyLibrary{% endblock %}
+{% block page_class %}page-library{% endblock %}
+{% block content %}
+<div class="library-header">
+  <h1 class="page-title">{% if is_own_shelf %}My Shelf{% else %}{{ owner.username }}'s Shelf{% endif %}</h1>
+  <div class="library-meta">
+    <span>{{ entries|length }} book{{ entries|length != 1 and 's' or '' }}</span>
+    {% if is_own_shelf %}
+      <span>·</span><span>Added to the library since joining</span>
+    {% endif %}
+  </div>
+</div>
+
+<form method="get" class="filter-bar">
+  <div class="filter-row">
+    <div class="filter keyword">
+      <label>Keyword</label>
+      <input type="search" name="q" value="{{ filters.q }}" placeholder="Search every field on this shelf…">
+    </div>
+    <div class="filter">
+      <label>Author</label>
+      <input type="text" name="author" value="{{ filters.author }}" list="library-authors" placeholder="Any author">
+    </div>
+    <div class="filter">
+      <label>Genre</label>
+      <select name="genre">
+        <option value="">Any genre</option>
+        {% for g in genres %}
+          <option value="{{ g.name }}" {% if filters.genre|lower == g.name|lower %}selected{% endif %}>{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter year">
+      <label>Published from</label>
+      <input type="number" name="year_min" value="{{ filters.year_min }}" min="-800" max="2100" placeholder="e.g. 1900">
+    </div>
+    <div class="filter year">
+      <label>to</label>
+      <input type="number" name="year_max" value="{{ filters.year_max }}" min="-800" max="2100" placeholder="e.g. 2026">
+    </div>
+    <div class="filter filter-actions">
+      <button type="submit" class="btn btn-primary">Filter</button>
+      <a href="{{ url_for(is_own_shelf and 'my_library' or 'reader_library', user_id=owner.id) }}" class="btn btn-ghost">Clear</a>
+    </div>
+  </div>
+  <datalist id="library-authors">
+    {% for a in authors %}<option value="{{ a }}"></option>{% endfor %}
+  </datalist>
+</form>
+
+{% if entries %}
+  {% set per_shelf = 6 %}
+  {% set shelves = (entries|length + per_shelf - 1) // per_shelf %}
+  <div class="book-case" style="max-shelves: {{ shelves }};">
+    {% for shelf in entries|batch(per_shelf) %}
+      <div class="shelf-row">
+        <div class="shelf">
+          {% for entry, book in shelf %}
+            {% if is_own_shelf %}
+              <div class="book-holder {% if not book.approved %}pending-holder{% endif %}">
+                {% include "partials/_shelf_book.html" %}
+                {% if not book.approved %}
+                  <span class="pending-badge" title="Awaiting Admin approval">⧗ Pending</span>
+                {% endif %}
+                <form method="post" action="{{ url_for('library_remove', book_id=book.id) }}"
+                      class="book-remove" onsubmit="return confirm('Remove “{{ book.title }}” from your shelf?')">
+                  <button type="submit" title="Remove from shelf">×</button>
+                </form>
+                <div class="book-added" title="Added to your library">
+                  {{ entry.added_at.strftime('%b %Y') }}
+                </div>
+              </div>
+            {% else %}
+              {% if book.approved %}
+                {% include "partials/_shelf_book.html" %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+        </div>
+        <div class="shelf-board"></div>
+      </div>
+    {% endfor %}
+    {% if is_own_shelf %}
+      <p class="shelf-hint">Hover a book to lift it from the shelf · ✕ removes it · ⧗ marks books awaiting Admin approval.</p>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="empty-note">
+    {% if is_own_shelf %}
+      <p>Nothing on this shelf yet{% if filters.q or filters.genre or filters.author %} matching those filters{% endif %}.</p>
+      <p>
+        <a href="{{ url_for('search') }}" class="btn btn-wood">Search the catalogue</a>
+        <a href="{{ url_for('submit') }}" class="btn btn-ghost">Submit a new book</a>
+      </p>
+    {% else %}
+      <p>{{ owner.username }} has no approved books on their shelf (yet).</p>
+    {% endif %}
+  </div>
+{% endif %}
+{% endblock %}

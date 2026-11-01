@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Join — MyLibrary{% endblock %}
+{% block content %}
+<div class="auth-card">
+  <div class="auth-mark">▤</div>
+  <h1>Create an account</h1>
+  <p class="auth-sub">Claim your own shelf — it starts empty and grows forever.</p>
+  <form method="post" class="stack-form">
+    <label>Username
+      <input type="text" name="username" required autofocus maxlength="64" autocomplete="username">
+    </label>
+    <label>Password <span class="hint">(at least 6 characters)</span>
+      <input type="password" name="password" required minlength="6" autocomplete="new-password">
+    </label>
+    <label>Confirm password
+      <input type="password" name="confirm" required minlength="6" autocomplete="new-password">
+    </label>
+    <button type="submit" class="btn btn-primary btn-block">Join the Library</button>
+  </form>
+  <p class="auth-alt">Already have a shelf? <a href="{{ url_for('login') }}">Sign in</a></p>
+</div>
+{% endblock %}
